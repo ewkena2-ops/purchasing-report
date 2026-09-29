@@ -2083,6 +2083,39 @@ ${DATASETS.map((k) => `\n  ${k}: [\n${rows(D[k])}${D[k].length ? "," : ""}\n  ],
     const firstInput = $("input", authEl);
     if (firstInput) firstInput.focus();
   }
+  // Records typed before the login existed stay on the device: offer once to add them to the shared report
+  let localOffered = false;
+  function offerLocalRecords() {
+    if (localOffered || !(canWrite())) return;
+    localOffered = true;
+    let raw = null, old = null;
+    try { raw = localStorage.getItem(STORE_KEY); old = raw && JSON.parse(raw); } catch (e) { return; }
+    if (!old || old.sample) return;
+    const parts = DATASETS.map((k) => [k, Array.isArray(old[k]) ? old[k].filter((r) => r && typeof r === "object") : []]).filter(([, rows]) => rows.length);
+    const n = parts.reduce((t, [, rows]) => t + rows.length, 0);
+    if (!n) return;
+    const labelOf = (k) => (SHEETS.find((d) => d.id === k) || { label: k }).label;
+    const add = h("button", { class: "btn btn-primary", type: "button" }, `Add ${n === 1 ? "it" : `all ${n}`} to the shared report`);
+    add.addEventListener("click", () => {
+      for (const [k, rows] of parts) {
+        const def = SHEETS.find((d) => d.id === k) || { prefix: `${k.slice(0, 2).toUpperCase()}-` };
+        for (const r of rows) D[k].push({ ...r, id: nextId(def) });
+      }
+      try { localStorage.setItem(`${STORE_KEY}-before-login`, raw); localStorage.removeItem(STORE_KEY); } catch (e) { /* ignore */ }
+      closeAuth();
+      saveData();
+      if (document.body.dataset.view === "sheet") { renderSheetTabs(); renderSheet(); dirty = true; } else rebuildAll();
+      toast(`Added ${n} ${n === 1 ? "record" : "records"}. Everyone with access can see ${n === 1 ? "it" : "them"} now.`);
+    });
+    const later = h("button", { class: "linkish", type: "button" }, "Not now");
+    later.addEventListener("click", closeAuth);
+    document.body.classList.add("locked");
+    authEl.hidden = false;
+    authEl.replaceChildren(h("div", { class: "auth-card" },
+      h("h2", {}, "Records on this device"),
+      h("p", {}, `This ${matchMedia("(pointer: coarse)").matches ? "phone" : "device"} has records that were saved here before the login: `, h("strong", {}, parts.map(([k, rows]) => `${labelOf(k)} ${rows.length}`).join(", ")), ". Nobody else can see them yet."),
+      add, h("p", { class: "auth-links" }, later, " · they stay on this device and you will be asked again next time.")));
+  }
   async function afterLogin(me) {
     ME = me;
     if (!me.role) { showAuth(me.hasOwner ? "waiting" : "claim"); return; }
@@ -2094,6 +2127,7 @@ ${DATASETS.map((k) => `\n  ${k}: [\n${rows(D[k])}${D[k].length ? "," : ""}\n  ],
     applyRoleUI();
     rebuildAll();
     setView(location.hash === "#sheet" ? "sheet" : "report", { scroll: false });
+    offerLocalRecords();
   }
   async function bootConnected() {
     document.body.classList.add("locked");
