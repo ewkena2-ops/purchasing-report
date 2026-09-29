@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Daily Purchasing & Materials Report</title>
+  <meta name="description" content="Daily purchasing and materials report: purchase requests, cheques, materials, supplier credit, cost variance, BOMs, supplier issues, cash needs and compliance.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b0b0b'/%3E%3Cpath d='M9 10h2l2 9h8l2-6H12' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='14' cy='23' r='1.5' fill='%233987e5'/%3E%3Ccircle cx='20' cy='23' r='1.5' fill='%233987e5'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script>
+    try { var t = localStorage.getItem("cr-theme"); if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t); } catch (e) {}
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to report</a>
+
+  <div class="app">
+    <aside class="sidebar" aria-label="Report sections">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h2l2.4 10.5h10.2L20 8H6.2"/><circle cx="9" cy="19" r="1.4" fill="var(--c-in)" stroke="none"/><circle cx="16" cy="19" r="1.4" fill="var(--c-in)" stroke="none"/></svg>
+        </span>
+        <div class="brand-text">
+          <strong id="company-name">Company</strong>
+          <span>Purchasing & materials</span>
+        </div>
+      </div>
+
+      <a class="back-link" href="https://ewkena2-ops.github.io/commercial-report/">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+        All departments
+      </a>
+
+      <nav class="nav" id="nav">
+        <a href="#requests" data-icon="cart">Purchase requests</a>
+        <a href="#cheques" data-icon="cheque">Cheques delivered</a>
+        <a href="#materials" data-icon="truck">Materials</a>
+        <a href="#credit" data-icon="bank">Supplier credit</a>
+        <a href="#variance" data-icon="scale">Cost variance</a>
+        <a href="#bom" data-icon="fileWarn">Missing BOMs</a>
+        <a href="#issues" data-icon="alertTri">Supplier issues</a>
+        <a href="#cash" data-icon="cash">Cash for tomorrow</a>
+        <a href="#summary" data-icon="note">Daily summary</a>
+        <a href="#compliance" data-icon="shield">Compliance</a>
+        <a href="#sheet" data-icon="sheet" class="nav-sheet">Data sheet</a>
+      </nav>
+
+      <div class="sidebar-foot">
+        <span class="foot-label">Prepared by</span>
+        <span id="prepared-by">—</span>
+        <span class="foot-label">Submitted to</span>
+        <span id="submitted-to">—</span>
+      </div>
+    </aside>
+
+    <main class="main" id="content">
+      <div class="content">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow" id="eyebrow">Company</p>
+            <h1>Daily Purchasing &amp; Materials Report</h1>
+            <p class="lede" id="lede"></p>
+          </div>
+          <div class="topbar-actions">
+            <div class="seg view-seg" id="view-seg" role="group" aria-label="View">
+              <button type="button" data-view="report" aria-pressed="true">Report</button>
+              <button type="button" data-view="sheet" aria-pressed="false">Data sheet</button>
+            </div>
+            <button class="btn btn-primary" id="pdf-btn" type="button" title="Download this report as a PDF file">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
+              <span>Download PDF</span>
+            </button>
+            <button class="icon-btn" id="print-btn" type="button" aria-label="Print" title="Print">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v7H6z"/></svg>
+            </button>
+            <button class="icon-btn" id="theme-btn" type="button" aria-label="Switch colour theme">
+              <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+              <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+            </button>
+          </div>
+        </header>
+
+        <div class="notice report-only" id="data-banner" hidden></div>
+
+        <div class="filterbar report-only" role="toolbar" aria-label="Report date">
+          <span class="filter-label">Date</span>
+          <div class="date-nav">
+            <button class="icon-btn sm" id="day-prev" type="button" aria-label="Previous day"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg></button>
+            <label class="sr-only" for="report-date">Report date</label>
+            <input class="input date-input" type="date" id="report-date">
+            <button class="icon-btn sm" id="day-next" type="button" aria-label="Next day"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button>
+          </div>
+          <button class="btn btn-sm" id="day-today" type="button">Today</button>
+          <span class="filter-note" id="filter-note"></span>
+        </div>
+
+        <!-- AT A GLANCE -->
+        <div class="overview-top report-only glance">
+          <article class="card hero" id="hero"></article>
+          <div class="tiles" id="kpi-tiles"></div>
+        </div>
+
+        <!-- 01 -->
+        <section class="section report-only" id="requests" aria-labelledby="h-requests">
+          <div class="section-head"><span class="section-num">01</span><div><h2 id="h-requests">Purchase requests &amp; bank status</h2><p class="rule-box" data-rule="requests"></p></div></div>
+          <div class="card stat-strip" id="req-stats"></div>
+          <article class="card table-card"><header class="card-head"><div><h3>Purchase requests</h3><p class="card-sub">Approver is set by amount. Red = a rule was broken.</p></div></header><div id="req-table"></div></article>
+        </section>
+
+        <!-- 02 -->
+        <section class="section report-only" id="cheques" aria-labelledby="h-cheques">
+          <div class="section-head"><span class="section-num">02</span><div><h2 id="h-cheques">Cheques delivered</h2><p class="rule-box" data-rule="cheques"></p></div></div>
+          <div class="card stat-strip" id="chq-stats"></div>
+          <article class="card table-card"><header class="card-head"><div><h3>Cheques delivered to suppliers</h3><p class="card-sub">Documents must reach finance within 24 hours</p></div></header><div id="chq-table"></div></article>
+        </section>
+
+        <!-- 03 -->
+        <section class="section report-only" id="materials" aria-labelledby="h-materials">
+          <div class="section-head"><span class="section-num">03</span><div><h2 id="h-materials">Materials received / in transit</h2><p class="rule-box" data-rule="materials"></p></div></div>
+          <div class="card stat-strip" id="mat-stats"></div>
+          <article class="card table-card"><header class="card-head"><div><h3>Materials</h3><p class="card-sub">Late = expected date has passed and not in store</p></div></header><div id="mat-table"></div></article>
+        </section>
+
+        <!-- 04 -->
+        <section class="section report-only" id="credit" aria-labelledby="h-credit">
+          <div class="section-head"><span class="section-num">04</span><div><h2 id="h-credit">Supplier credit &amp; outstanding balances</h2><p class="rule-box" data-rule="credit"></p></div></div>
+          <div class="card stat-strip" id="credit-stats"></div>
+          <article class="card table-card"><header class="card-head"><div><h3>Who we owe</h3><p class="card-sub">Opening + new credit − payments = closing. Next due and overdue are worked out oldest-first.</p></div></header><div id="credit-table"></div></article>
+          <article class="card chart-card" data-chart="supBalances" data-title="Balance by supplier" data-sub="Closing balance on the report date" data-hb></article>
+        </section>
+
+        <!-- 05 -->
+        <section class="section report-only" id="variance" aria-labelledby="h-variance">
+          <div class="section-head"><span class="section-num">05</span><div><h2 id="h-variance">Cost variance &amp; overrun alerts</h2><p class="rule-box" data-rule="variance"></p></div></div>
+          <div class="card stat-strip" id="var-stats"></div>
+          <article class="card table-card"><header class="card-head"><div><h3>Jobs: contract value vs purchase cost</h3><p class="card-sub">Purchase cost comes from the Jobs sheet, or the sum of the job's purchase requests when left blank</p></div></header><div id="var-table"></div></article>
+        </section>
+
+        <!-- 06 -->
+        <section class="section report-only" id="bom" aria-labelledby="h-bom">
+          <div class="section-head"><span class="section-num">06</span><div><h2 id="h-bom">Missing data / outstanding BOMs</h2><p class="rule-box" data-rule="bom"></p></div></div>
+          <div class="card stat-strip" id="bom-stats"></div>
+          <article class="card table-card"><header class="card-head"><div><h3>Jobs without a complete BOM</h3><p class="card-sub">Late = expected completion date has passed</p></div></header><div id="bom-table"></div></article>
+        </section>
+
+        <!-- 07 -->
+        <section class="section report-only" id="issues" aria-labelledby="h-issues">
+          <div class="section-head"><span class="section-num">07</span><div><h2 id="h-issues">Defective materials &amp; supplier issues</h2><p class="rule-box" data-rule="issues"></p></div></div>
+          <div class="card stat-strip" id="issue-stats"></div>
+          <article class="card table-card"><header class="card-head"><div><h3>Supplier issues</h3><p class="card-sub">Open issues first</p></div></header><div id="issue-table"></div></article>
+        </section>
+
+        <!-- 08 -->
+        <section class="section report-only" id="cash" aria-labelledby="h-cash">
+          <div class="section-head"><span class="section-num">08</span><div><h2 id="h-cash">Cash requirements for tomorrow</h2><p class="rule-box" data-rule="cash"></p></div></div>
+          <div class="card stat-strip" id="cash-stats"></div>
+          <article class="card table-card"><header class="card-head"><div><h3 id="cash-table-title">Cash needed tomorrow</h3><p class="card-sub">In priority order</p></div></header><div id="cash-table"></div></article>
+          <article class="card chart-card" data-chart="forecast" data-title="7-day cash forecast" data-sub="Cash requests plus supplier payments falling due, per day"></article>
+        </section>
+
+        <!-- 09 -->
+        <section class="section report-only" id="summary" aria-labelledby="h-summary">
+          <div class="section-head"><span class="section-num">09</span><div><h2 id="h-summary">Daily summary</h2><p class="rule-box" data-rule="summary"></p></div></div>
+          <div class="grid grid-2">
+            <article class="card summary-card" id="summary-written"></article>
+            <article class="card summary-card" id="summary-auto"></article>
+          </div>
+        </section>
+
+        <!-- 10 -->
+        <section class="section report-only" id="compliance" aria-labelledby="h-compliance">
+          <div class="section-head"><span class="section-num">10</span><div><h2 id="h-compliance">Compliance checklist</h2><p class="rule-box" data-rule="compliance"></p></div></div>
+          <article class="card checklist" id="checklist"></article>
+        </section>
+
+        <!-- DATA SHEET -->
+        <section class="sheet-view" id="sheet" aria-labelledby="h-sheet">
+          <div class="section-head">
+            <span class="section-num">✎</span>
+            <div>
+              <h2 id="h-sheet">Data sheet</h2>
+              <p>Type, paste or import your records here, like a spreadsheet. The report is calculated from this sheet.</p>
+            </div>
+          </div>
+
+          <div class="notice" id="sheet-notice"></div>
+
+          <div class="sheet-bar">
+            <div class="seg sheet-tabs" id="sheet-tabs" role="tablist" aria-label="Sheets"></div>
+          </div>
+
+          <div class="sheet-actions">
+            <button class="btn btn-sm" id="import-btn" type="button"></button>
+            <input type="file" id="import-file" accept=".xlsx,.xls,.csv" hidden>
+            <button class="btn btn-sm" id="export-xlsx" type="button"></button>
+            <button class="btn btn-sm" id="export-js" type="button"></button>
+            <span class="dt-spacer"></span>
+            <button class="btn btn-sm btn-ghost" id="load-example" type="button">Try example data</button>
+            <button class="btn btn-sm btn-ghost danger" id="clear-all" type="button">Start empty</button>
+          </div>
+
+          <article class="card sheet-card" id="sheet-body"></article>
+        </section>
+
+        <footer class="page-foot">
+          <p><strong id="foot-company">Company</strong> · Daily purchasing &amp; materials report · <span id="foot-period"></span></p>
+          <p class="muted" id="foot-note"></p>
+        </footer>
+      </div>
+    </main>
+  </div>
+
+  <div id="tooltip" hidden></div>
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
