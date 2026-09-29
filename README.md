@@ -22,6 +22,19 @@ Klever Küche's daily purchasing report for the purchasing officer, submitted to
 - Pick the **date** at the top. **Data sheet** has one tab per part. Type rows, or **Import Excel / CSV**. **Export Excel** makes a backup.
 - **Settings** holds the names, deadline, bank, approval limit and currency.
 - **Download PDF** makes the day's report (about 3 pages).
-- Records are saved on the device where they are typed. To publish the same data for everyone, use **Download data.js** and upload it here.
+
+## Login and access
+
+Records are shared online through a small Cloudflare server (Worker + D1 database, free plan). Everyone signs in with email and password. One account works on every department page the person has access to.
+
+| Access | Can do |
+|---|---|
+| Owner | Everything, plus **Team & access**: add people, change access, reset forgotten passwords |
+| Enters data | Add and edit records and settings, see the report, make PDFs |
+| View only | See the report and records, make PDFs; cannot change anything |
+
+**First start:** the owner opens the link, taps *First time? Create your account*, then *Set up as owner*. In **Data sheet → Team & access** they add each person's email. Those people then create their own account with that email.
+
+The server is shared with the Commercial report (code in the commercial-report repo, `server/`). To use the page on one device only (no login), leave `apiUrl` empty in `config.js`.
 
 Amharic text in PDFs uses the bundled Abyssinica SIL font (`fonts/`, SIL Open Font License).

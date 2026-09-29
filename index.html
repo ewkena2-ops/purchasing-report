@@ -60,6 +60,7 @@
             <p class="lede" id="lede"></p>
           </div>
           <div class="topbar-actions">
+            <div class="account-chip" id="account-chip" hidden></div>
             <div class="seg view-seg" id="view-seg" role="group" aria-label="View">
               <button type="button" data-view="report" aria-pressed="true">Report</button>
               <button type="button" data-view="sheet" aria-pressed="false">Data sheet</button>
@@ -211,7 +212,10 @@
   <div id="tooltip" hidden></div>
   <div class="toast" id="toast" role="status" hidden></div>
 
+  <div class="auth" id="auth" hidden></div>
+
   <script src="data.js"></script>
+  <script src="config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

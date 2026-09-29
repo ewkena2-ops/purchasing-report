@@ -1,7 +1,8 @@
 /* ==========================================================================
    Daily Purchasing & Materials Report — app
-   The report is computed from the data sheet. The sheet starts from
-   window.REPORT_DATA (data.js); edits are saved on this device.
+   The report is computed from the data sheet. Records are shared online
+   through the Cloudflare server named in config.js (with login and access
+   levels), or saved on this device when config.js is empty.
    ========================================================================== */
 (() => {
   "use strict";
@@ -102,8 +103,15 @@
     for (const k of DATASETS) if (!Array.isArray(out[k])) out[k] = [];
     return out;
   }
+  // Online mode: when config.js names the Cloudflare Worker API, records are shared and need a login
+  const CFG = window.REPORT_CONFIG || {};
+  const CONNECTED = !!(CFG.apiUrl && CFG.dept);
+  const ROLE_LABEL = { owner: "Owner", editor: "Enters data", viewer: "View only" };
+  let ROLE = null, ME = null;
+  const canWrite = () => !CONNECTED || ROLE === "owner" || ROLE === "editor";
   let LOCAL = false;
   function loadData() {
+    if (CONNECTED) return normalize({});
     try {
       const raw = localStorage.getItem(STORE_KEY);
       if (raw) { LOCAL = true; return normalize(JSON.parse(raw)); }
@@ -116,6 +124,7 @@
   function saveData() {
     LOCAL = true;
     dirty = true;
+    if (CONNECTED) { scheduleSync(); return; }
     try { localStorage.setItem(STORE_KEY, JSON.stringify(D)); } catch (e) { toast("Could not save on this device (storage is blocked). Export to Excel to keep your changes."); }
   }
 
@@ -955,7 +964,7 @@
       const row = h("div", { class: `check-row ${tone}` },
         h("span", { class: "check-icon" }, icon(ic)),
         h("div", { class: "check-text" }, h("strong", {}, c.label), h("span", {}, c.detail)));
-      if (c.sent) {
+      if (c.sent && canWrite()) {
         const sent = D.sent.find((x) => x.date === v.T);
         const btn = h("button", { class: `btn btn-sm ${sent ? "" : "btn-primary"}`, type: "button" }, icon("send"), sent ? "Change time" : "Mark as sent");
         btn.addEventListener("click", () => {
@@ -1028,7 +1037,7 @@
     $("#submitted-to").textContent = C.submittedTo || "—";
     $("#lede").textContent = `Prepared by ${C.preparedBy || "purchasing"} for ${C.submittedTo || "operations and finance"}. Deadline ${C.deadline || "17:30"}.`;
     $("#foot-period").textContent = `amounts in ${CUR}`;
-    $("#foot-note").textContent = D.sample
+    $("#foot-note").textContent = CONNECTED ? "Every number is calculated from the Data sheet. Records are saved online and shown only to the people with access." : D.sample
       ? "Showing example data. Clear it with Start empty in the Data sheet."
       : "Every number is calculated from the Data sheet. Records are saved on the device they were entered on.";
     const rules = {
@@ -1052,7 +1061,9 @@
     openSheet.addEventListener("click", () => setView("sheet"));
     const empty = DATASETS.filter((k) => k !== "sent").every((k) => !D[k].length);
     let msg = null;
-    if (empty) msg = [h("strong", {}, "No records yet. "), "Open the Data sheet to add purchase requests, cheques, materials, suppliers, jobs, issues and cash needs. Or tap Try example data to see how the report looks."];
+    if (CONNECTED && !empty) { el.hidden = true; return; }
+    if (CONNECTED) msg = [h("strong", {}, "No records yet. "), canWrite() ? "Open the Data sheet to add records. Everything you type saves online for the people with access." : "Nothing has been entered yet."];
+    else if (empty) msg = [h("strong", {}, "No records yet. "), "Open the Data sheet to add purchase requests, cheques, materials, suppliers, jobs, issues and cash needs. Or tap Try example data to see how the report looks."];
     else if (D.sample) msg = [h("strong", {}, "Example data. "), "These records are made up so you can see the report. Clear them with Start empty in the Data sheet."];
     else if (LOCAL) msg = [h("strong", {}, "Saved on this device. "), "Back up regularly with Export Excel in the Data sheet."];
     el.className = "notice report-only";
@@ -1198,6 +1209,7 @@
     return t;
   }
   function nextId(def) {
+    if (CONNECTED) return `${def.prefix}${todayISO().slice(2).replace(/-/g, "")}-${Math.random().toString(36).slice(2, 6)}`;
     let max = 0, width = 3;
     for (const r of D[def.id]) {
       const m = String(r.id || "").match(/(\d+)\s*$/);
@@ -1224,7 +1236,8 @@
 
   function renderSheetTabs() {
     const tabs = $("#sheet-tabs");
-    const all = [...SHEETS.map((d) => ({ id: d.id, label: d.label, count: D[d.id].length })), { id: "settings", label: "Settings" }];
+    const all = [...SHEETS.map((d) => ({ id: d.id, label: d.label, count: D[d.id].length })), { id: "settings", label: "Settings" },
+      ...(CONNECTED && ROLE === "owner" ? [{ id: "team", label: "Team & access" }] : [])];
     tabs.replaceChildren(...all.map((t) => {
       const b = h("button", { type: "button", role: "tab", "aria-selected": String(t.id === sheetUI.active), "aria-pressed": String(t.id === sheetUI.active) },
         t.label, t.count != null ? h("span", { class: "cnt" }, num(t.count)) : null);
@@ -1234,6 +1247,12 @@
   }
 
   function renderSheetNotice() {
+    if (CONNECTED) {
+      $("#sheet-notice").replaceChildren(icon("info"), h("div", { class: "grow" }, h("strong", {}, "Connected. "),
+        canWrite() ? ["Changes save online automatically and appear for everyone with access. Back up with ", h("strong", {}, "Export Excel"), "."]
+          : "You can see the records but not change them. Ask the owner if you need to enter data."));
+      return;
+    }
     $("#sheet-notice").replaceChildren(icon("info"),
       h("div", { class: "grow" },
         h("strong", {}, "Saved automatically on this device. "),
@@ -1245,8 +1264,10 @@
     renderSheetNotice();
     const host = $("#sheet-body");
     if (sheetUI.active === "settings") { renderSettings(host); return; }
+    if (sheetUI.active === "team") { renderTeam(host); return; }
     const def = SHEETS.find((d) => d.id === sheetUI.active);
     const rows = D[def.id];
+    const ro = !canWrite();
     const search = h("input", { class: "input", type: "search", placeholder: `Search ${def.label.toLowerCase()}`, "aria-label": `Search ${def.label}`, value: sheetUI.q });
     const count = h("span", { class: "count" });
     const add = h("button", { class: "btn btn-sm btn-primary", type: "button" }, icon("plus"), "Add row");
@@ -1258,7 +1279,7 @@
     const drawGrid = () => {
       const q = sheetUI.q.toLowerCase();
       const visible = rows.map((r, i) => [r, i]).filter(([r]) => !q || def.cols.some((c) => String(r[c.key] ?? "").toLowerCase().includes(q)));
-      count.textContent = q ? `${num(visible.length)} of ${num(rows.length)} rows` : `${num(rows.length)} rows`;
+      count.textContent = q ? `${num(visible.length)} of ${num(rows.length)} rows` : `${num(rows.length)} ${rows.length === 1 ? "row" : "rows"}`;
       if (!rows.length) {
         gridWrap.replaceChildren(h("div", { class: "sheet-empty" }, h("strong", {}, `No ${def.label.toLowerCase()} yet. `), "Tap Add row, or import an Excel/CSV file."));
         return;
@@ -1267,7 +1288,7 @@
         h("th", { class: "rn", scope: "col" }, "#"),
         def.cols.map((c) => h("th", { class: c.type === "number" ? "num" : null, scope: "col", style: `min-width:${c.w}px` }, c.label)),
         h("th", { scope: "col" }, h("span", { class: "sr-only" }, "Delete"))));
-      gridWrap.replaceChildren(h("table", { class: "sheet-grid" }, thead, h("tbody", {}, visible.map(([r, i]) => sheetRow(def, r, i)))));
+      gridWrap.replaceChildren(h("table", { class: "sheet-grid" }, thead, h("tbody", {}, visible.map(([r, i]) => sheetRow(def, r, i, ro)))));
     };
     search.addEventListener("input", () => { sheetUI.q = search.value.trim(); drawGrid(); });
     add.addEventListener("click", () => {
@@ -1281,15 +1302,15 @@
       if (target) target.focus();
     });
     host.replaceChildren(
-      h("div", { class: "sheet-head" }, h("h3", {}, def.label), count, h("span", { class: "dt-spacer" }),
-        h("div", { class: "dt-search" }, icon("search"), search), add),
+      h("div", { class: "sheet-head" }, h("h3", {}, def.label), ro ? badge("Read-only") : null, count, h("span", { class: "dt-spacer" }),
+        h("div", { class: "dt-search" }, icon("search"), search), ro ? null : add),
       gridWrap,
       h("div", { class: "sheet-foot" }, "Tip: press Enter to move down a column. Numbers without commas; dates as day / month / year."),
       datalists);
     drawGrid();
   }
 
-  function sheetRow(def, r, index) {
+  function sheetRow(def, r, index, ro = false) {
     const tr = h("tr", {});
     tr.append(h("td", { class: "rn" }, String(index + 1)));
     def.cols.forEach((c, ci) => {
@@ -1309,6 +1330,7 @@
       }
       input.dataset.col = String(ci);
       input.dataset.key = c.key;
+      if (ro) input.disabled = true;
       input.addEventListener("change", () => {
         const v = coerce(c, input.value);
         r[c.key] = v;
@@ -1337,7 +1359,7 @@
       renderSheet(); renderSheetTabs();
       toast(`Row deleted from ${def.label}.`, { label: "Undo", run: () => { arr.splice(at, 0, r); saveData(); renderSheet(); renderSheetTabs(); } });
     });
-    tr.append(h("td", {}, del));
+    tr.append(h("td", {}, ro ? null : del));
     return tr;
   }
 
@@ -1346,6 +1368,7 @@
     for (const sd of SETTINGS) {
       const id = `set-${sd.key}`;
       const input = h("input", { class: "input", id, type: "text", inputmode: sd.number ? "decimal" : null, value: D.company[sd.key] ?? "" });
+      if (!canWrite()) input.disabled = true;
       input.addEventListener("change", () => {
         const val = input.value.trim();
         D.company[sd.key] = sd.number ? n0(parseNumber(val)) : sd.key === "currency" ? val.toUpperCase() : val;
@@ -1819,6 +1842,320 @@ ${DATASETS.map((k) => `\n  ${k}: [\n${rows(D[k])}${D[k].length ? "," : ""}\n  ],
     finally { btn.disabled = false; btn.replaceChildren(...kids); }
   }
 
+  /* ==========================================================================
+     ONLINE MODE — Cloudflare Worker API: login, shared records, live updates
+     ========================================================================== */
+  const authEl = $("#auth");
+  const TOKEN_KEY = "kr-session"; // shared by every department page, so one sign-in works on all of them
+  const API_BASE = `${String(CFG.apiUrl || "").replace(/\/+$/, "")}/api/${CFG.dept}`;
+  const DEPT_LABEL = CFG.label || $(".topbar h1").textContent.trim();
+  let TOKEN = null, REV = 0, pollTimer = 0;
+  let snap = new Map(), setSnap = "";
+  let syncTimer = 0, retryTimer = 0, syncing = false, syncAgain = false, pending = false;
+  const keyOf = (ds, rid) => `${ds}\u0000${rid}`;
+  try { TOKEN = localStorage.getItem(TOKEN_KEY); } catch (e) { /* storage blocked */ }
+  function saveToken(t) { TOKEN = t; try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); } catch (e) { /* ignore */ } }
+  async function api(path, body) {
+    const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 20000);
+    let res;
+    try {
+      res = await fetch(API_BASE + path, {
+        method: body ? "POST" : "GET",
+        headers: { "Content-Type": "application/json", ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: ctl.signal,
+      });
+    } catch (e) {
+      throw new Error(e.name === "AbortError" ? "The server did not answer in time" : "No internet connection");
+    } finally { clearTimeout(timer); }
+    let data = null;
+    try { data = await res.json(); } catch (e) { /* empty body */ }
+    if (res.status === 401 && TOKEN && path !== "/login") {
+      saveToken(null); ROLE = null; clearInterval(pollTimer);
+      showAuth("signin", (data && data.error) || "Your session ended. Please sign in again.");
+      throw Object.assign(new Error("Signed out"), { quiet: true });
+    }
+    if (!res.ok) throw Object.assign(new Error((data && data.error) || `Server error ${res.status}`), { status: res.status });
+    return data;
+  }
+  function takeSnapshot() {
+    snap = new Map();
+    for (const ds of DATASETS) for (const r of D[ds]) snap.set(keyOf(ds, r.id), JSON.stringify(r));
+    setSnap = JSON.stringify(D.company);
+  }
+  function setSyncState(st, detail) {
+    const el = $("#sync-state");
+    if (!el) return;
+    el.className = `sync-state ${st}`;
+    el.replaceChildren(icon(st === "saved" ? "check" : st === "saving" ? "clock" : "alertCircle"), st === "saved" ? "Saved" : st === "saving" ? "Saving…" : "Not saved");
+    el.title = detail || (st === "saved" ? "All changes are saved online" : "");
+  }
+  function scheduleSync() {
+    if (!ROLE || !canWrite()) return;
+    pending = true;
+    setSyncState("saving");
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(syncNow, 500);
+  }
+  async function syncNow() {
+    if (syncing) { syncAgain = true; return; }
+    syncing = true;
+    try {
+      const ups = [], seen = new Set();
+      for (const ds of DATASETS) {
+        const def = SHEETS.find((d) => d.id === ds) || { prefix: `${ds.slice(0, 2).toUpperCase()}-` };
+        for (const r of D[ds]) {
+          if (!/^[A-Za-z0-9._:-]{1,80}$/.test(String(r.id || ""))) r.id = nextId(def);
+          const k = keyOf(ds, r.id);
+          seen.add(k);
+          const js = JSON.stringify(r);
+          if (snap.get(k) !== js) ups.push({ dataset: ds, rid: r.id, data: r, js });
+        }
+      }
+      const dels = [...snap.keys()].filter((k) => !seen.has(k)).map((k) => { const [dataset, rid] = k.split("\u0000"); return { dataset, rid }; });
+      const setJs = JSON.stringify(D.company);
+      const settings = setJs !== setSnap ? D.company : null;
+      const jobs = [...ups.map((u) => ["u", u]), ...dels.map((d) => ["d", d])];
+      for (let i = 0; i < Math.max(jobs.length, settings ? 1 : 0); i += 200) {
+        const part = jobs.slice(i, i + 200);
+        const body = { upserts: part.filter((j) => j[0] === "u").map(([, u]) => ({ dataset: u.dataset, rid: u.rid, data: u.data })), deletes: part.filter((j) => j[0] === "d").map(([, d]) => d) };
+        if (i === 0 && settings) body.settings = settings;
+        await api("/sync", body);
+        for (const [kind, x] of part) { if (kind === "u") snap.set(keyOf(x.dataset, x.rid), x.js); else snap.delete(keyOf(x.dataset, x.rid)); }
+        if (i === 0 && settings) setSnap = setJs;
+      }
+      pending = false;
+      setSyncState("saved");
+    } catch (e) {
+      if (e.quiet) return;
+      console.error(e);
+      setSyncState("error", e.message || String(e));
+      if (e.status === 403) { toast("Your access has changed. Reloading…"); setTimeout(() => location.reload(), 1500); return; }
+      toast(`Not saved online (${e.message || e}). It will try again by itself.`, { label: "Try now", run: () => scheduleSync() });
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(() => { if (pending) scheduleSync(); }, 15000);
+    } finally {
+      syncing = false;
+      if (syncAgain) { syncAgain = false; scheduleSync(); }
+    }
+  }
+  async function loadAll() {
+    const res = await api("/data");
+    const d = { company: res.settings || {} };
+    for (const k of DATASETS) d[k] = [];
+    for (const r of res.records || []) if (d[r.dataset]) d[r.dataset].push({ ...r.data, id: r.rid });
+    D = normalize(d);
+    D.sample = false;
+    REV = res.rev || 0;
+    takeSnapshot();
+  }
+  let renderQueued = false;
+  function queueRemoteRender() {
+    if (renderQueued) return;
+    renderQueued = true;
+    const run = () => {
+      const a = document.activeElement;
+      if (a && a.classList && a.classList.contains("cell")) { a.addEventListener("blur", () => setTimeout(run, 60), { once: true }); return; }
+      renderQueued = false;
+      if (document.body.dataset.view === "sheet") { renderSheetTabs(); renderSheet(); dirty = true; } else rebuildAll();
+    };
+    setTimeout(run, 200);
+  }
+  async function poll() {
+    if (!ROLE || pending || syncing || document.visibilityState !== "visible") return;
+    try {
+      let changed = false, more = true;
+      while (more) {
+        const res = await api(`/changes?since=${REV}`);
+        for (const r of res.records || []) {
+          const arr = D[r.dataset];
+          if (!arr) continue;
+          const k = keyOf(r.dataset, r.rid), at = arr.findIndex((x) => x.id === r.rid);
+          if (r.deleted) { if (at >= 0) { arr.splice(at, 1); changed = true; } snap.delete(k); continue; }
+          const rec = { ...r.data, id: r.rid }, js = JSON.stringify(rec);
+          if (snap.get(k) === js) continue;
+          if (at >= 0) arr[at] = rec; else arr.push(rec);
+          snap.set(k, js);
+          changed = true;
+        }
+        if (res.settings) {
+          D.company = normalize({ company: res.settings }).company;
+          const js = JSON.stringify(D.company);
+          if (js !== setSnap) { setSnap = js; changed = true; }
+        }
+        REV = res.rev || REV;
+        more = !!res.more;
+      }
+      if (changed) queueRemoteRender();
+    } catch (e) {
+      if (e.status === 403) { ROLE = null; clearInterval(pollTimer); applyRoleUI(); showAuth("waiting"); }
+      /* otherwise offline: try again next time */
+    }
+  }
+  function startPolling() {
+    clearInterval(pollTimer);
+    pollTimer = setInterval(poll, 15000);
+  }
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") poll(); });
+  function renderAccountChip() {
+    const el = $("#account-chip");
+    if (!CONNECTED || !ROLE) { el.hidden = true; return; }
+    const pass = h("button", { class: "btn btn-sm btn-ghost", type: "button", title: "Change your password" }, "Password");
+    pass.addEventListener("click", () => showAuth("changepass"));
+    const out = h("button", { class: "btn btn-sm btn-ghost", type: "button", title: "Sign out" }, "Sign out");
+    out.addEventListener("click", signOut);
+    el.replaceChildren(...[canWrite() ? h("span", { class: "sync-state saved", id: "sync-state" }) : null, h("span", { class: "who" }, h("strong", {}, ME.name || ME.email), h("span", {}, ROLE_LABEL[ROLE] || ROLE)), pass, out].filter(Boolean));
+    el.hidden = false;
+    setSyncState(pending ? "saving" : "saved");
+  }
+  async function signOut() {
+    try { await api("/logout", {}); } catch (e) { /* already signed out */ }
+    saveToken(null);
+    location.reload();
+  }
+  function applyRoleUI() {
+    document.body.dataset.role = CONNECTED ? ROLE || "none" : "local";
+    for (const id of ["#load-example", "#clear-all", "#export-js"]) $(id).hidden = CONNECTED;
+    $("#import-btn").hidden = CONNECTED && !canWrite();
+    renderAccountChip();
+  }
+  function closeAuth() { authEl.hidden = true; document.body.classList.remove("locked"); }
+  function showAuth(mode, message) {
+    document.body.classList.add("locked");
+    authEl.hidden = false;
+    const err = h("p", { class: "auth-error", role: "alert" }, message || "");
+    const field = (label, attrs) => { const i = h("input", { class: "input", ...attrs }); return [h("label", { class: "field" }, h("span", {}, label), i), i]; };
+    const mark = $(".brand .brand-mark") ? $(".brand .brand-mark").cloneNode(true) : null;
+    const head = h("div", { class: "auth-head" }, mark, h("div", {}, h("strong", {}, C.name || "Company"), h("span", {}, DEPT_LABEL)));
+    const link = (text, fn) => { const b = h("button", { class: "linkish", type: "button" }, text); b.addEventListener("click", fn); return b; };
+    const busy = async (btn, fn) => { btn.disabled = true; err.textContent = ""; try { await fn(); } catch (x) { if (!x.quiet) err.textContent = x.message || String(x); btn.disabled = false; } };
+    let body = [];
+    if (mode === "loading") body = [h("p", { class: "muted" }, "Loading…")];
+    else if (mode === "error") {
+      const again = h("button", { class: "btn btn-primary", type: "button" }, "Try again");
+      again.addEventListener("click", () => location.reload());
+      body = [h("h2", {}, "Could not connect"), h("p", {}, message || "Something went wrong."), again];
+    }
+    else if (mode === "signin" || mode === "signup") {
+      const [fName, iName] = field("Your name", { type: "text", autocomplete: "name" });
+      const [fEmail, iEmail] = field("Email", { type: "email", autocomplete: "email", required: true });
+      const [fPass, iPass] = field("Password", { type: "password", autocomplete: mode === "signin" ? "current-password" : "new-password", required: true, minlength: 8 });
+      const go = h("button", { class: "btn btn-primary", type: "submit" }, mode === "signin" ? "Sign in" : "Create account");
+      const form = h("form", { class: "auth-form" }, mode === "signup" ? fName : null, fEmail, fPass, err, go);
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        busy(go, async () => {
+          const email = iEmail.value.trim().toLowerCase(), password = iPass.value;
+          const res = mode === "signin" ? await api("/login", { email, password }) : await api("/signup", { email, password, name: iName.value.trim() });
+          saveToken(res.token);
+          await afterLogin(res.me);
+        });
+      });
+      body = [h("h2", {}, mode === "signin" ? "Sign in" : "Create your account"),
+        h("p", { class: "muted" }, mode === "signin" ? "Use the email the owner gave access to." : "Use the email the owner added in Team & access. Choose a password of at least 8 characters."),
+        form,
+        h("p", { class: "auth-links" }, mode === "signin"
+          ? [link("First time? Create your account", () => showAuth("signup")), " · ", link("Forgot password?", () => { err.textContent = "Ask the owner to set a new password for you in Team & access."; })]
+          : link("I already have an account", () => showAuth("signin")))];
+    } else if (mode === "changepass") {
+      const [fCur, iCur] = field("Current password", { type: "password", autocomplete: "current-password" });
+      const [fNew, iNew] = field("New password (at least 8 characters)", { type: "password", autocomplete: "new-password", minlength: 8 });
+      const go = h("button", { class: "btn btn-primary", type: "submit" }, "Save new password");
+      const form = h("form", { class: "auth-form" }, fCur, fNew, err, go);
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        busy(go, async () => { await api("/password", { current: iCur.value, next: iNew.value }); closeAuth(); toast("Password changed."); });
+      });
+      body = [h("h2", {}, "Change your password"), form, h("p", { class: "muted" }, "The new password works on every department page you have access to."), h("p", { class: "auth-links" }, link("Cancel", closeAuth))];
+    } else if (mode === "claim") {
+      const [fName, iName] = field("Your name", { type: "text", value: ME.name || "" });
+      const go = h("button", { class: "btn btn-primary", type: "button" }, "Set up as owner");
+      go.addEventListener("click", () => busy(go, async () => { const res = await api("/claim-owner", { name: iName.value.trim() }); await afterLogin(res.me); }));
+      body = [h("h2", {}, "First-time setup"), h("p", {}, `Signed in as ${ME.email}. Nobody manages the ${DEPT_LABEL} yet. The first person becomes the owner: they see everything and decide who else gets access.`), fName, err, go,
+        h("p", { class: "auth-links" }, link("Sign out", signOut))];
+    } else if (mode === "waiting") {
+      const again = h("button", { class: "btn btn-primary", type: "button" }, "Check again");
+      again.addEventListener("click", () => busy(again, async () => { const res = await api("/me"); await afterLogin(res.me); }));
+      body = [h("h2", {}, "Waiting for access"), h("p", {}, `You are signed in as ${ME.email}, but this email has no access to the ${DEPT_LABEL} yet. Ask the owner to add it in Team & access, then tap Check again.`), err, again,
+        h("p", { class: "auth-links" }, link("Sign out", signOut))];
+    }
+    authEl.replaceChildren(h("div", { class: "auth-card" }, head, ...body));
+    const firstInput = $("input", authEl);
+    if (firstInput) firstInput.focus();
+  }
+  async function afterLogin(me) {
+    ME = me;
+    if (!me.role) { showAuth(me.hasOwner ? "waiting" : "claim"); return; }
+    showAuth("loading");
+    ROLE = me.role;
+    try { await loadAll(); } catch (x) { if (!x.quiet) showAuth("error", `Could not load the records: ${x.message || x}.`); return; }
+    startPolling();
+    closeAuth();
+    applyRoleUI();
+    rebuildAll();
+    setView(location.hash === "#sheet" ? "sheet" : "report", { scroll: false });
+  }
+  async function bootConnected() {
+    document.body.classList.add("locked");
+    applyRoleUI();
+    if (!TOKEN) { showAuth("signin"); return; }
+    showAuth("loading");
+    try {
+      const res = await api("/me");
+      await afterLogin(res.me);
+    } catch (x) {
+      if (!x.quiet) showAuth("signin", `Could not reach the server: ${x.message || x}`);
+    }
+  }
+  async function renderTeam(host) {
+    host.replaceChildren(h("div", { class: "sheet-head" }, h("h3", {}, "Team & access")), h("div", { class: "sheet-empty" }, "Loading…"));
+    let data;
+    try { data = await api("/members"); } catch (x) { if (!x.quiet) host.replaceChildren(h("div", { class: "sheet-empty" }, h("strong", {}, "Could not load the team. "), x.message)); return; }
+    const me = (ME.email || "").toLowerCase();
+    const roleSelect = (value, disabled) => { const sel = h("select", { class: "select", disabled }, ["owner", "editor", "viewer"].map((r) => h("option", { value: r }, ROLE_LABEL[r]))); sel.value = value; return sel; };
+    const iName = h("input", { class: "input", type: "text", placeholder: "Name", "aria-label": "Name" });
+    const iEmail = h("input", { class: "input", type: "email", placeholder: "name@example.com", "aria-label": "Email" });
+    const iRole = roleSelect("editor", false);
+    const add = h("button", { class: "btn btn-sm btn-primary", type: "button" }, icon("plus"), "Give access");
+    add.addEventListener("click", async () => {
+      try {
+        await api("/members", { email: iEmail.value.trim(), name: iName.value.trim(), role: iRole.value });
+        toast(`${iEmail.value.trim()} can now create an account. Send them the link; they tap "First time? Create your account".`);
+        renderTeam(host);
+      } catch (x) { if (!x.quiet) toast(x.message); }
+    });
+    const pill = (ok) => h("span", { class: `badge ${ok ? "good" : "warning"}` }, icon(ok ? "check" : "clock"), ok ? "Account created" : "Not signed up yet");
+    const rows = (data.members || []).map((m) => {
+      const self = m.email.toLowerCase() === me;
+      const sel = roleSelect(m.role, self);
+      sel.addEventListener("change", async () => { try { await api("/members", { email: m.email, role: sel.value }); toast(`${m.email}: ${ROLE_LABEL[sel.value]}.`); } catch (x) { if (!x.quiet) toast(x.message); renderTeam(host); } });
+      const actions = h("div", { class: "team-acts" });
+      if (!self && m.hasAccount && m.role !== "owner") {
+        const reset = h("button", { class: "btn btn-sm", type: "button" }, "Set password");
+        reset.addEventListener("click", async () => {
+          const pw = prompt(`New password for ${m.email} (at least 8 characters). Tell them the new password; they can change it after signing in.`);
+          if (!pw) return;
+          try { await api("/members/password", { email: m.email, password: pw }); toast(`New password set for ${m.email}.`); } catch (x) { if (!x.quiet) toast(x.message); }
+        });
+        actions.append(reset);
+      }
+      if (!self) {
+        const rm = h("button", { class: "btn btn-sm btn-ghost danger", type: "button" }, "Remove");
+        rm.addEventListener("click", async () => {
+          if (!confirm(`Remove access for ${m.email}? They will no longer see this report.`)) return;
+          try { await api("/members/delete", { email: m.email }); renderTeam(host); } catch (x) { if (!x.quiet) toast(x.message); }
+        });
+        actions.append(rm);
+      }
+      return h("tr", {}, h("td", {}, h("strong", {}, m.name || "—")), h("td", {}, m.email), h("td", {}, sel), h("td", {}, pill(m.hasAccount)), h("td", {}, self ? h("span", { class: "muted" }, "You") : actions));
+    });
+    host.replaceChildren(
+      h("div", { class: "sheet-head" }, h("h3", {}, "Team & access"), h("span", { class: "count" }, `${num(rows.length)} ${rows.length === 1 ? "person" : "people"}`)),
+      h("div", { class: "team-add" }, iName, iEmail, iRole, add),
+      h("div", { class: "table-wrap" }, h("table", { class: "dt" }, h("thead", {}, h("tr", {}, ["Name", "Email", "Access", "Status", ""].map((t) => h("th", { scope: "col" }, t)))), h("tbody", {}, rows))),
+      h("div", { class: "sheet-foot" }, "Owner: sees everything and manages access. Enters data: adds and edits records and settings. View only: sees the report and records but cannot change them. Forgotten password: tap Set password and tell the person the new one. One account works on every department page the person has access to."));
+  }
+
   /* ---------- view switching ---------- */
   function setView(v, { scroll = true } = {}) {
     document.body.dataset.view = v;
@@ -1943,5 +2280,6 @@ ${DATASETS.map((k) => `\n  ${k}: [\n${rows(D[k])}${D[k].length ? "," : ""}\n  ],
   initStateFromURL();
   initOnce();
   rebuildAll();
-  setView(location.hash === "#sheet" ? "sheet" : "report", { scroll: false });
+  if (CONNECTED) bootConnected();
+  else { applyRoleUI(); setView(location.hash === "#sheet" ? "sheet" : "report", { scroll: false }); }
 })();
