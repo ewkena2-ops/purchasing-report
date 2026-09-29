@@ -33,7 +33,7 @@ Records are shared online through a small Cloudflare server (Worker + D1 databas
 | Enters data | Add and edit records and settings, see the report, make PDFs |
 | View only | See the report and records, make PDFs; cannot change anything |
 
-**First start:** the owner opens the link, taps *First time? Create your account*, then *Set up as owner*. In **Data sheet → Team & access** they add each person's email. Those people then create their own account with that email.
+**Adding people:** there is no self sign-up. The owner opens **Data sheet → Team & access**, types the person's name, a login (e.g. `sara@klever.local`, it does not need to be a real email) and a password, picks the access level and taps *Give access*. Then they send the person the link, login and password. A forgotten password is reset there with *Set password*. Someone who already has a login from another department is added without a password.
 
 The server is shared with the Commercial report (code in the commercial-report repo, `server/`). To use the page on one device only (no login), leave `apiUrl` empty in `config.js`.
 

@@ -2036,27 +2036,21 @@ ${DATASETS.map((k) => `\n  ${k}: [\n${rows(D[k])}${D[k].length ? "," : ""}\n  ],
       again.addEventListener("click", () => location.reload());
       body = [h("h2", {}, "Could not connect"), h("p", {}, message || "Something went wrong."), again];
     }
-    else if (mode === "signin" || mode === "signup") {
-      const [fName, iName] = field("Your name", { type: "text", autocomplete: "name" });
-      const [fEmail, iEmail] = field("Email", { type: "email", autocomplete: "email", required: true });
-      const [fPass, iPass] = field("Password", { type: "password", autocomplete: mode === "signin" ? "current-password" : "new-password", required: true, minlength: 8 });
-      const go = h("button", { class: "btn btn-primary", type: "submit" }, mode === "signin" ? "Sign in" : "Create account");
-      const form = h("form", { class: "auth-form" }, mode === "signup" ? fName : null, fEmail, fPass, err, go);
+    else if (mode === "signin") {
+      const [fEmail, iEmail] = field("Login", { type: "email", autocomplete: "username", required: true, placeholder: "name@klever.local" });
+      const [fPass, iPass] = field("Password", { type: "password", autocomplete: "current-password", required: true });
+      const go = h("button", { class: "btn btn-primary", type: "submit" }, "Sign in");
+      const form = h("form", { class: "auth-form" }, fEmail, fPass, err, go);
       form.addEventListener("submit", (e) => {
         e.preventDefault();
         busy(go, async () => {
-          const email = iEmail.value.trim().toLowerCase(), password = iPass.value;
-          const res = mode === "signin" ? await api("/login", { email, password }) : await api("/signup", { email, password, name: iName.value.trim() });
+          const res = await api("/login", { email: iEmail.value.trim().toLowerCase(), password: iPass.value });
           saveToken(res.token);
           await afterLogin(res.me);
         });
       });
-      body = [h("h2", {}, mode === "signin" ? "Sign in" : "Create your account"),
-        h("p", { class: "muted" }, mode === "signin" ? "Use the email the owner gave access to." : "Use the email the owner added in Team & access. Choose a password of at least 8 characters."),
-        form,
-        h("p", { class: "auth-links" }, mode === "signin"
-          ? [link("First time? Create your account", () => showAuth("signup")), " · ", link("Forgot password?", () => { err.textContent = "Ask the owner to set a new password for you in Team & access."; })]
-          : link("I already have an account", () => showAuth("signin")))];
+      body = [h("h2", {}, "Sign in"), h("p", { class: "muted" }, "Use the login and password you got from the owner."), form,
+        h("p", { class: "auth-links" }, link("Forgot password?", () => { err.textContent = "Ask the owner to set a new password for you in Team & access."; }))];
     } else if (mode === "changepass") {
       const [fCur, iCur] = field("Current password", { type: "password", autocomplete: "current-password" });
       const [fNew, iNew] = field("New password (at least 8 characters)", { type: "password", autocomplete: "new-password", minlength: 8 });
@@ -2148,23 +2142,25 @@ ${DATASETS.map((k) => `\n  ${k}: [\n${rows(D[k])}${D[k].length ? "," : ""}\n  ],
     const me = (ME.email || "").toLowerCase();
     const roleSelect = (value, disabled) => { const sel = h("select", { class: "select", disabled }, ["owner", "editor", "viewer"].map((r) => h("option", { value: r }, ROLE_LABEL[r]))); sel.value = value; return sel; };
     const iName = h("input", { class: "input", type: "text", placeholder: "Name", "aria-label": "Name" });
-    const iEmail = h("input", { class: "input", type: "email", placeholder: "name@example.com", "aria-label": "Email" });
+    const iEmail = h("input", { class: "input", type: "email", placeholder: "Login, e.g. selam@klever.local", "aria-label": "Login" });
+    const iPass = h("input", { class: "input", type: "text", placeholder: "Password (at least 8)", "aria-label": "Password", autocomplete: "off" });
     const iRole = roleSelect("editor", false);
     const add = h("button", { class: "btn btn-sm btn-primary", type: "button" }, icon("plus"), "Give access");
     add.addEventListener("click", async () => {
       try {
-        await api("/members", { email: iEmail.value.trim(), name: iName.value.trim(), role: iRole.value });
-        toast(`${iEmail.value.trim()} can now create an account. Send them the link; they tap "First time? Create your account".`);
+        const login = iEmail.value.trim().toLowerCase();
+        await api("/members", { email: login, name: iName.value.trim(), role: iRole.value, password: iPass.value });
+        toast(iPass.value ? `Done. Send ${iName.value.trim() || "them"} the link, the login ${login} and the password.` : `Access given. Tap Set password to give ${login} a password.`);
         renderTeam(host);
       } catch (x) { if (!x.quiet) toast(x.message); }
     });
-    const pill = (ok) => h("span", { class: `badge ${ok ? "good" : "warning"}` }, icon(ok ? "check" : "clock"), ok ? "Account created" : "Not signed up yet");
+    const pill = (ok) => h("span", { class: `badge ${ok ? "good" : "warning"}` }, icon(ok ? "check" : "clock"), ok ? "Has login" : "No password yet");
     const rows = (data.members || []).map((m) => {
       const self = m.email.toLowerCase() === me;
       const sel = roleSelect(m.role, self);
       sel.addEventListener("change", async () => { try { await api("/members", { email: m.email, role: sel.value }); toast(`${m.email}: ${ROLE_LABEL[sel.value]}.`); } catch (x) { if (!x.quiet) toast(x.message); renderTeam(host); } });
       const actions = h("div", { class: "team-acts" });
-      if (!self && m.hasAccount && m.role !== "owner") {
+      if (!self && m.role !== "owner") {
         const reset = h("button", { class: "btn btn-sm", type: "button" }, "Set password");
         reset.addEventListener("click", async () => {
           const pw = prompt(`New password for ${m.email} (at least 8 characters). Tell them the new password; they can change it after signing in.`);
@@ -2185,9 +2181,9 @@ ${DATASETS.map((k) => `\n  ${k}: [\n${rows(D[k])}${D[k].length ? "," : ""}\n  ],
     });
     host.replaceChildren(
       h("div", { class: "sheet-head" }, h("h3", {}, "Team & access"), h("span", { class: "count" }, `${num(rows.length)} ${rows.length === 1 ? "person" : "people"}`)),
-      h("div", { class: "team-add" }, iName, iEmail, iRole, add),
-      h("div", { class: "table-wrap" }, h("table", { class: "dt" }, h("thead", {}, h("tr", {}, ["Name", "Email", "Access", "Status", ""].map((t) => h("th", { scope: "col" }, t)))), h("tbody", {}, rows))),
-      h("div", { class: "sheet-foot" }, "Owner: sees everything and manages access. Enters data: adds and edits records and settings. View only: sees the report and records but cannot change them. Forgotten password: tap Set password and tell the person the new one. One account works on every department page the person has access to."));
+      h("div", { class: "team-add" }, iName, iEmail, iPass, iRole, add),
+      h("div", { class: "table-wrap" }, h("table", { class: "dt" }, h("thead", {}, h("tr", {}, ["Name", "Login", "Access", "Status", ""].map((t) => h("th", { scope: "col" }, t)))), h("tbody", {}, rows))),
+      h("div", { class: "sheet-foot" }, "Owner: sees everything and manages access. Enters data: adds and edits records and settings. View only: sees the report and records but cannot change them. To add a person: type their name, a login (e.g. sara@klever.local) and a password, tap Give access, then send them the link, login and password. Forgotten password: tap Set password and tell the person the new one. One account works on every department page the person has access to."));
   }
 
   /* ---------- view switching ---------- */
