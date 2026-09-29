@@ -92,6 +92,13 @@
   function normalize(d) {
     const out = clone(d || {});
     out.company = { ...(SAMPLE.company || {}), ...(out.company || {}) };
+    // One-time update: the finance officer is now Selam (was Betty)
+    if (!out.company.renamedFinanceOfficer) {
+      for (const k of ["submittedTo", "approverLow", "preparedBy", "approverHigh"]) {
+        if (typeof out.company[k] === "string") out.company[k] = out.company[k].replace(/\bBetty\b/g, "Selam");
+      }
+      out.company.renamedFinanceOfficer = true;
+    }
     for (const k of DATASETS) if (!Array.isArray(out[k])) out[k] = [];
     return out;
   }
