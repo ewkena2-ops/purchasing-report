@@ -1,6 +1,6 @@
 # Daily Purchasing & Materials Report
 
-Klever Küche's daily purchasing report for the purchasing officer, submitted to operations and finance by 5:30 PM.
+Klever Küche's daily purchasing report for the purchasing officer, submitted to the Chairman by 5:30 PM.
 
 **Live:** https://ewkena2-ops.github.io/purchasing-report/
 

@@ -349,7 +349,7 @@
     const sent = D.sent.find((x) => x.date === v.T);
     const isToday = v.T === todayISO();
     checks.push({
-      label: `Report sent to ${C.submittedTo || "operations and finance"} by ${deadline}`,
+      label: `Report sent to ${C.submittedTo || "the Chairman"} by ${deadline}`,
       state: sent ? (sent.time <= deadline ? "ok" : "fail") : isToday && nowHM() <= deadline ? "pending" : "fail",
       detail: sent ? `Sent at ${sent.time}${sent.time > deadline ? " (after the deadline)" : ""}` : isToday && nowHM() <= deadline ? `Not sent yet · deadline ${deadline}` : "Not marked as sent",
       sent: true,
@@ -1034,7 +1034,7 @@
     $("#eyebrow").textContent = C.name || "Purchasing";
     $("#prepared-by").textContent = C.preparedBy || "—";
     $("#submitted-to").textContent = C.submittedTo || "—";
-    $("#lede").textContent = `Prepared by ${C.preparedBy || "purchasing"} for ${C.submittedTo || "operations and finance"}. Deadline ${C.deadline || "17:30"}.`;
+    $("#lede").textContent = `Prepared by ${C.preparedBy || "purchasing"} for ${C.submittedTo || "the Chairman"}. Deadline ${C.deadline || "17:30"}.`;
     $("#foot-period").textContent = `amounts in ${CUR}`;
     $("#foot-note").textContent = CONNECTED ? "Every number is calculated from the Data sheet. Records are saved online and shared with everyone who has this report's link." : D.sample
       ? "Showing example data. Clear it with Start empty in the Data sheet."
@@ -1049,7 +1049,7 @@
       issues: `${C.storekeeper || "The storekeeper"} rejects, ${who} contacts the supplier, finance withholds payment if needed.`,
       cash: "This feeds finance's 7-day cash flow forecast.",
       summary: "3–4 sentences: the biggest risk, the biggest win, and what you need from operations or finance tomorrow.",
-      compliance: `${who} checks these before sending the report to ${C.submittedTo || "operations and finance"} by ${C.deadline || "17:30"}.`,
+      compliance: `${who} checks these before sending the report to ${C.submittedTo || "the Chairman"} by ${C.deadline || "17:30"}.`,
     };
     $$("[data-rule]").forEach((el) => el.replaceChildren(icon("shield"), h("span", {}, h("strong", {}, "Rule: "), rules[el.dataset.rule] || "")));
   }

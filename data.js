@@ -14,7 +14,7 @@ window.REPORT_DATA = {
     currency: "ETB",
     locale: "en-US",
     preparedBy: "Getachew (Purchasing Officer)",
-    submittedTo: "Liu (Operations) & Selam (Finance)",
+    submittedTo: "Chairman",
     deadline: "17:30",
     bank: "ZamZam Bank",
     approverLow: "Selam",
