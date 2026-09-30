@@ -1,8 +1,8 @@
 /* ==========================================================================
    Daily Purchasing & Materials Report — app
    The report is computed from the data sheet. Records are shared online
-   through the Cloudflare server named in config.js (with login and access
-   levels), or saved on this device when config.js is empty.
+   through the Cloudflare server named in config.js with everyone who has
+   the report's full link, or saved on this device when config.js is empty.
    ========================================================================== */
 (() => {
   "use strict";
@@ -103,12 +103,11 @@
     for (const k of DATASETS) if (!Array.isArray(out[k])) out[k] = [];
     return out;
   }
-  // Online mode: when config.js names the Cloudflare Worker API, records are shared and need a login
+  // Online mode: when config.js names the Cloudflare Worker API, records are shared with everyone who has the full link
   const CFG = window.REPORT_CONFIG || {};
   const CONNECTED = !!(CFG.apiUrl && CFG.dept);
-  const ROLE_LABEL = { owner: "Owner", editor: "Enters data", viewer: "View only" };
-  let ROLE = null, ME = null;
-  const canWrite = () => !CONNECTED || ROLE === "owner" || ROLE === "editor";
+  let LINKED = false; // true once the link's code is accepted and the shared records are loaded
+  const canWrite = () => !CONNECTED || LINKED;
   let LOCAL = false;
   function loadData() {
     if (CONNECTED) return normalize({});
@@ -1037,7 +1036,7 @@
     $("#submitted-to").textContent = C.submittedTo || "—";
     $("#lede").textContent = `Prepared by ${C.preparedBy || "purchasing"} for ${C.submittedTo || "operations and finance"}. Deadline ${C.deadline || "17:30"}.`;
     $("#foot-period").textContent = `amounts in ${CUR}`;
-    $("#foot-note").textContent = CONNECTED ? "Every number is calculated from the Data sheet. Records are saved online and shown only to the people with access." : D.sample
+    $("#foot-note").textContent = CONNECTED ? "Every number is calculated from the Data sheet. Records are saved online and shared with everyone who has this report's link." : D.sample
       ? "Showing example data. Clear it with Start empty in the Data sheet."
       : "Every number is calculated from the Data sheet. Records are saved on the device they were entered on.";
     const rules = {
@@ -1062,7 +1061,7 @@
     const empty = DATASETS.filter((k) => k !== "sent").every((k) => !D[k].length);
     let msg = null;
     if (CONNECTED && !empty) { el.hidden = true; return; }
-    if (CONNECTED) msg = [h("strong", {}, "No records yet. "), canWrite() ? "Open the Data sheet to add records. Everything you type saves online for the people with access." : "Nothing has been entered yet."];
+    if (CONNECTED) msg = [h("strong", {}, "No records yet. "), canWrite() ? "Open the Data sheet to add records. Everything you type is shared with everyone who has this report's link." : "Nothing has been entered yet."];
     else if (empty) msg = [h("strong", {}, "No records yet. "), "Open the Data sheet to add purchase requests, cheques, materials, suppliers, jobs, issues and cash needs. Or tap Try example data to see how the report looks."];
     else if (D.sample) msg = [h("strong", {}, "Example data. "), "These records are made up so you can see the report. Clear them with Start empty in the Data sheet."];
     else if (LOCAL) msg = [h("strong", {}, "Saved on this device. "), "Back up regularly with Export Excel in the Data sheet."];
@@ -1236,8 +1235,7 @@
 
   function renderSheetTabs() {
     const tabs = $("#sheet-tabs");
-    const all = [...SHEETS.map((d) => ({ id: d.id, label: d.label, count: D[d.id].length })), { id: "settings", label: "Settings" },
-      ...(CONNECTED && ROLE === "owner" ? [{ id: "team", label: "Team & access" }] : [])];
+    const all = [...SHEETS.map((d) => ({ id: d.id, label: d.label, count: D[d.id].length })), { id: "settings", label: "Settings" }];
     tabs.replaceChildren(...all.map((t) => {
       const b = h("button", { type: "button", role: "tab", "aria-selected": String(t.id === sheetUI.active), "aria-pressed": String(t.id === sheetUI.active) },
         t.label, t.count != null ? h("span", { class: "cnt" }, num(t.count)) : null);
@@ -1249,7 +1247,7 @@
   function renderSheetNotice() {
     if (CONNECTED) {
       $("#sheet-notice").replaceChildren(icon("info"), h("div", { class: "grow" }, h("strong", {}, "Connected. "),
-        canWrite() ? ["Changes save online automatically and appear for everyone with access. Back up with ", h("strong", {}, "Export Excel"), "."]
+        canWrite() ? ["Changes save online automatically and appear for everyone with this report's link. Back up with ", h("strong", {}, "Export Excel"), "."]
           : "You can see the records but not change them. Ask the owner if you need to enter data."));
       return;
     }
@@ -1264,7 +1262,6 @@
     renderSheetNotice();
     const host = $("#sheet-body");
     if (sheetUI.active === "settings") { renderSettings(host); return; }
-    if (sheetUI.active === "team") { renderTeam(host); return; }
     const def = SHEETS.find((d) => d.id === sheetUI.active);
     const rows = D[def.id];
     const ro = !canWrite();
@@ -1843,25 +1840,36 @@ ${DATASETS.map((k) => `\n  ${k}: [\n${rows(D[k])}${D[k].length ? "," : ""}\n  ],
   }
 
   /* ==========================================================================
-     ONLINE MODE — Cloudflare Worker API: login, shared records, live updates
+     ONLINE MODE — Cloudflare Worker API: shared records, live updates
+     No login. The full link carries a secret code (?k=...). The page keeps
+     the code on the device, so the report also opens from a home-screen
+     shortcut; without the code nothing can be seen or changed.
      ========================================================================== */
   const authEl = $("#auth");
-  const TOKEN_KEY = "kr-session"; // shared by every department page, so one sign-in works on all of them
+  const KEY_STORE = `kr-key-${CFG.dept}`;
   const API_BASE = `${String(CFG.apiUrl || "").replace(/\/+$/, "")}/api/${CFG.dept}`;
-  const DEPT_LABEL = CFG.label || $(".topbar h1").textContent.trim();
-  let TOKEN = null, REV = 0, pollTimer = 0;
+  let KEY = null, REV = 0, pollTimer = 0;
   let snap = new Map(), setSnap = "";
   let syncTimer = 0, retryTimer = 0, syncing = false, syncAgain = false, pending = false;
   const keyOf = (ds, rid) => `${ds}\u0000${rid}`;
-  try { TOKEN = localStorage.getItem(TOKEN_KEY); } catch (e) { /* storage blocked */ }
-  function saveToken(t) { TOKEN = t; try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); } catch (e) { /* ignore */ } }
+  function readKey() {
+    let k = null;
+    try { k = new URL(location.href).searchParams.get("k"); } catch (e) { /* ignore */ }
+    if (k) { try { localStorage.setItem(KEY_STORE, k); } catch (e) { /* storage blocked */ } return k; }
+    try { k = localStorage.getItem(KEY_STORE); } catch (e) { /* storage blocked */ }
+    if (k) {
+      // Put the code back in the address bar, so a link copied from it is complete
+      try { const u = new URL(location.href); u.searchParams.set("k", k); history.replaceState(null, "", u.pathname + u.search + u.hash); } catch (e) { /* ignore */ }
+    }
+    return k;
+  }
   async function api(path, body) {
     const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 20000);
     let res;
     try {
       res = await fetch(API_BASE + path, {
         method: body ? "POST" : "GET",
-        headers: { "Content-Type": "application/json", ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}) },
+        headers: { "Content-Type": "application/json", Authorization: `Key ${KEY}` },
         body: body ? JSON.stringify(body) : undefined,
         signal: ctl.signal,
       });
@@ -1870,10 +1878,12 @@ ${DATASETS.map((k) => `\n  ${k}: [\n${rows(D[k])}${D[k].length ? "," : ""}\n  ],
     } finally { clearTimeout(timer); }
     let data = null;
     try { data = await res.json(); } catch (e) { /* empty body */ }
-    if (res.status === 401 && TOKEN && path !== "/login") {
-      saveToken(null); ROLE = null; clearInterval(pollTimer);
-      showAuth("signin", (data && data.error) || "Your session ended. Please sign in again.");
-      throw Object.assign(new Error("Signed out"), { quiet: true });
+    if (res.status === 401) {
+      LINKED = false; clearInterval(pollTimer);
+      try { localStorage.removeItem(KEY_STORE); } catch (e) { /* ignore */ }
+      applyRoleUI();
+      showAuth("nokey", data && data.error);
+      throw Object.assign(new Error("Link code not valid"), { quiet: true });
     }
     if (!res.ok) throw Object.assign(new Error((data && data.error) || `Server error ${res.status}`), { status: res.status });
     return data;
@@ -1891,7 +1901,7 @@ ${DATASETS.map((k) => `\n  ${k}: [\n${rows(D[k])}${D[k].length ? "," : ""}\n  ],
     el.title = detail || (st === "saved" ? "All changes are saved online" : "");
   }
   function scheduleSync() {
-    if (!ROLE || !canWrite()) return;
+    if (!LINKED) return;
     pending = true;
     setSyncState("saving");
     clearTimeout(syncTimer);
@@ -1930,7 +1940,6 @@ ${DATASETS.map((k) => `\n  ${k}: [\n${rows(D[k])}${D[k].length ? "," : ""}\n  ],
       if (e.quiet) return;
       console.error(e);
       setSyncState("error", e.message || String(e));
-      if (e.status === 403) { toast("Your access has changed. Reloading…"); setTimeout(() => location.reload(), 1500); return; }
       toast(`Not saved online (${e.message || e}). It will try again by itself.`, { label: "Try now", run: () => scheduleSync() });
       clearTimeout(retryTimer);
       retryTimer = setTimeout(() => { if (pending) scheduleSync(); }, 15000);
@@ -1962,7 +1971,7 @@ ${DATASETS.map((k) => `\n  ${k}: [\n${rows(D[k])}${D[k].length ? "," : ""}\n  ],
     setTimeout(run, 200);
   }
   async function poll() {
-    if (!ROLE || pending || syncing || document.visibilityState !== "visible") return;
+    if (!LINKED || pending || syncing || document.visibilityState !== "visible") return;
     try {
       let changed = false, more = true;
       while (more) {
@@ -1987,100 +1996,39 @@ ${DATASETS.map((k) => `\n  ${k}: [\n${rows(D[k])}${D[k].length ? "," : ""}\n  ],
         more = !!res.more;
       }
       if (changed) queueRemoteRender();
-    } catch (e) {
-      if (e.status === 403) { ROLE = null; clearInterval(pollTimer); applyRoleUI(); showAuth("waiting"); }
-      /* otherwise offline: try again next time */
-    }
+    } catch (e) { /* offline: try again next time */ }
   }
   function startPolling() {
     clearInterval(pollTimer);
     pollTimer = setInterval(poll, 15000);
   }
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") poll(); });
-  function renderAccountChip() {
-    const el = $("#account-chip");
-    if (!CONNECTED || !ROLE) { el.hidden = true; return; }
-    const pass = h("button", { class: "btn btn-sm btn-ghost", type: "button", title: "Change your password" }, "Password");
-    pass.addEventListener("click", () => showAuth("changepass"));
-    const out = h("button", { class: "btn btn-sm btn-ghost", type: "button", title: "Sign out" }, "Sign out");
-    out.addEventListener("click", signOut);
-    el.replaceChildren(...[canWrite() ? h("span", { class: "sync-state saved", id: "sync-state" }) : null, h("span", { class: "who" }, h("strong", {}, ME.name || ME.email), h("span", {}, ROLE_LABEL[ROLE] || ROLE)), pass, out].filter(Boolean));
-    el.hidden = false;
-    setSyncState(pending ? "saving" : "saved");
-  }
-  async function signOut() {
-    try { await api("/logout", {}); } catch (e) { /* already signed out */ }
-    saveToken(null);
-    location.reload();
-  }
   function applyRoleUI() {
-    document.body.dataset.role = CONNECTED ? ROLE || "none" : "local";
+    document.body.dataset.role = CONNECTED ? (LINKED ? "link" : "none") : "local";
     for (const id of ["#load-example", "#clear-all", "#export-js"]) $(id).hidden = CONNECTED;
-    $("#import-btn").hidden = CONNECTED && !canWrite();
-    renderAccountChip();
+    $("#import-btn").hidden = !canWrite();
+    const chip = $("#account-chip");
+    chip.hidden = !(CONNECTED && LINKED);
+    if (!chip.hidden && !$("#sync-state", chip)) { chip.replaceChildren(h("span", { class: "sync-state saved", id: "sync-state" })); setSyncState(pending ? "saving" : "saved"); }
   }
   function closeAuth() { authEl.hidden = true; document.body.classList.remove("locked"); }
   function showAuth(mode, message) {
     document.body.classList.add("locked");
     authEl.hidden = false;
-    const err = h("p", { class: "auth-error", role: "alert" }, message || "");
-    const field = (label, attrs) => { const i = h("input", { class: "input", ...attrs }); return [h("label", { class: "field" }, h("span", {}, label), i), i]; };
     const mark = $(".brand .brand-mark") ? $(".brand .brand-mark").cloneNode(true) : null;
-    const head = h("div", { class: "auth-head" }, mark, h("div", {}, h("strong", {}, C.name || "Company"), h("span", {}, DEPT_LABEL)));
-    const link = (text, fn) => { const b = h("button", { class: "linkish", type: "button" }, text); b.addEventListener("click", fn); return b; };
-    const busy = async (btn, fn) => { btn.disabled = true; err.textContent = ""; try { await fn(); } catch (x) { if (!x.quiet) err.textContent = x.message || String(x); btn.disabled = false; } };
+    const head = h("div", { class: "auth-head" }, mark, h("div", {}, h("strong", {}, C.name || "Company"), h("span", {}, CFG.label || $(".topbar h1").textContent.trim())));
+    const again = h("button", { class: "btn btn-primary", type: "button" }, "Try again");
+    again.addEventListener("click", () => location.reload());
     let body = [];
     if (mode === "loading") body = [h("p", { class: "muted" }, "Loading…")];
-    else if (mode === "error") {
-      const again = h("button", { class: "btn btn-primary", type: "button" }, "Try again");
-      again.addEventListener("click", () => location.reload());
-      body = [h("h2", {}, "Could not connect"), h("p", {}, message || "Something went wrong."), again];
-    }
-    else if (mode === "signin") {
-      const [fEmail, iEmail] = field("Login", { type: "email", autocomplete: "username", required: true, placeholder: "name@klever.local" });
-      const [fPass, iPass] = field("Password", { type: "password", autocomplete: "current-password", required: true });
-      const go = h("button", { class: "btn btn-primary", type: "submit" }, "Sign in");
-      const form = h("form", { class: "auth-form" }, fEmail, fPass, err, go);
-      form.addEventListener("submit", (e) => {
-        e.preventDefault();
-        busy(go, async () => {
-          const res = await api("/login", { email: iEmail.value.trim().toLowerCase(), password: iPass.value });
-          saveToken(res.token);
-          await afterLogin(res.me);
-        });
-      });
-      body = [h("h2", {}, "Sign in"), h("p", { class: "muted" }, "Use the login and password you got from the owner."), form,
-        h("p", { class: "auth-links" }, link("Forgot password?", () => { err.textContent = "Ask the owner to set a new password for you in Team & access."; }))];
-    } else if (mode === "changepass") {
-      const [fCur, iCur] = field("Current password", { type: "password", autocomplete: "current-password" });
-      const [fNew, iNew] = field("New password (at least 8 characters)", { type: "password", autocomplete: "new-password", minlength: 8 });
-      const go = h("button", { class: "btn btn-primary", type: "submit" }, "Save new password");
-      const form = h("form", { class: "auth-form" }, fCur, fNew, err, go);
-      form.addEventListener("submit", (e) => {
-        e.preventDefault();
-        busy(go, async () => { await api("/password", { current: iCur.value, next: iNew.value }); closeAuth(); toast("Password changed."); });
-      });
-      body = [h("h2", {}, "Change your password"), form, h("p", { class: "muted" }, "The new password works on every department page you have access to."), h("p", { class: "auth-links" }, link("Cancel", closeAuth))];
-    } else if (mode === "claim") {
-      const [fName, iName] = field("Your name", { type: "text", value: ME.name || "" });
-      const go = h("button", { class: "btn btn-primary", type: "button" }, "Set up as owner");
-      go.addEventListener("click", () => busy(go, async () => { const res = await api("/claim-owner", { name: iName.value.trim() }); await afterLogin(res.me); }));
-      body = [h("h2", {}, "First-time setup"), h("p", {}, `Signed in as ${ME.email}. Nobody manages the ${DEPT_LABEL} yet. The first person becomes the owner: they see everything and decide who else gets access.`), fName, err, go,
-        h("p", { class: "auth-links" }, link("Sign out", signOut))];
-    } else if (mode === "waiting") {
-      const again = h("button", { class: "btn btn-primary", type: "button" }, "Check again");
-      again.addEventListener("click", () => busy(again, async () => { const res = await api("/me"); await afterLogin(res.me); }));
-      body = [h("h2", {}, "Waiting for access"), h("p", {}, `You are signed in as ${ME.email}, but this email has no access to the ${DEPT_LABEL} yet. Ask the owner to add it in Team & access, then tap Check again.`), err, again,
-        h("p", { class: "auth-links" }, link("Sign out", signOut))];
-    }
+    else if (mode === "error") body = [h("h2", {}, "Could not connect"), h("p", {}, message || "Something went wrong."), again];
+    else if (mode === "nokey") body = [h("h2", {}, "This link is not complete"), h("p", {}, "Open the report with the full link you were sent. It ends with a code, like …?k=abc123."), message ? h("p", { class: "auth-error" }, message) : null];
     authEl.replaceChildren(h("div", { class: "auth-card" }, head, ...body));
-    const firstInput = $("input", authEl);
-    if (firstInput) firstInput.focus();
   }
-  // Records typed before the login existed stay on the device: offer once to add them to the shared report
+  // Records typed before the report was shared stay on the device: offer once to add them to the shared report
   let localOffered = false;
   function offerLocalRecords() {
-    if (localOffered || !(canWrite())) return;
+    if (localOffered || !LINKED) return;
     localOffered = true;
     let raw = null, old = null;
     try { raw = localStorage.getItem(STORE_KEY); old = raw && JSON.parse(raw); } catch (e) { return; }
@@ -2095,11 +2043,11 @@ ${DATASETS.map((k) => `\n  ${k}: [\n${rows(D[k])}${D[k].length ? "," : ""}\n  ],
         const def = SHEETS.find((d) => d.id === k) || { prefix: `${k.slice(0, 2).toUpperCase()}-` };
         for (const r of rows) D[k].push({ ...r, id: nextId(def) });
       }
-      try { localStorage.setItem(`${STORE_KEY}-before-login`, raw); localStorage.removeItem(STORE_KEY); } catch (e) { /* ignore */ }
+      try { localStorage.setItem(`${STORE_KEY}-before-sharing`, raw); localStorage.removeItem(STORE_KEY); } catch (e) { /* ignore */ }
       closeAuth();
       saveData();
       if (document.body.dataset.view === "sheet") { renderSheetTabs(); renderSheet(); dirty = true; } else rebuildAll();
-      toast(`Added ${n} ${n === 1 ? "record" : "records"}. Everyone with access can see ${n === 1 ? "it" : "them"} now.`);
+      toast(`Added ${n} ${n === 1 ? "record" : "records"}. Everyone with the link can see ${n === 1 ? "it" : "them"} now.`);
     });
     const later = h("button", { class: "linkish", type: "button" }, "Not now");
     later.addEventListener("click", closeAuth);
@@ -2107,83 +2055,23 @@ ${DATASETS.map((k) => `\n  ${k}: [\n${rows(D[k])}${D[k].length ? "," : ""}\n  ],
     authEl.hidden = false;
     authEl.replaceChildren(h("div", { class: "auth-card" },
       h("h2", {}, "Records on this device"),
-      h("p", {}, `This ${matchMedia("(pointer: coarse)").matches ? "phone" : "device"} has records that were saved here before the login: `, h("strong", {}, parts.map(([k, rows]) => `${labelOf(k)} ${rows.length}`).join(", ")), ". Nobody else can see them yet."),
+      h("p", {}, `This ${matchMedia("(pointer: coarse)").matches ? "phone" : "device"} has records that were saved only here, before the report was shared: `, h("strong", {}, parts.map(([k, rows]) => `${labelOf(k)} ${rows.length}`).join(", ")), ". Nobody else can see them yet."),
       add, h("p", { class: "auth-links" }, later, " · they stay on this device and you will be asked again next time.")));
   }
-  async function afterLogin(me) {
-    ME = me;
-    if (!me.role) { showAuth(me.hasOwner ? "waiting" : "claim"); return; }
+  async function bootConnected() {
+    document.body.classList.add("locked");
+    applyRoleUI();
+    KEY = readKey();
+    if (!KEY) { showAuth("nokey"); return; }
     showAuth("loading");
-    ROLE = me.role;
     try { await loadAll(); } catch (x) { if (!x.quiet) showAuth("error", `Could not load the records: ${x.message || x}.`); return; }
+    LINKED = true;
     startPolling();
     closeAuth();
     applyRoleUI();
     rebuildAll();
     setView(location.hash === "#sheet" ? "sheet" : "report", { scroll: false });
     offerLocalRecords();
-  }
-  async function bootConnected() {
-    document.body.classList.add("locked");
-    applyRoleUI();
-    if (!TOKEN) { showAuth("signin"); return; }
-    showAuth("loading");
-    try {
-      const res = await api("/me");
-      await afterLogin(res.me);
-    } catch (x) {
-      if (!x.quiet) showAuth("signin", `Could not reach the server: ${x.message || x}`);
-    }
-  }
-  async function renderTeam(host) {
-    host.replaceChildren(h("div", { class: "sheet-head" }, h("h3", {}, "Team & access")), h("div", { class: "sheet-empty" }, "Loading…"));
-    let data;
-    try { data = await api("/members"); } catch (x) { if (!x.quiet) host.replaceChildren(h("div", { class: "sheet-empty" }, h("strong", {}, "Could not load the team. "), x.message)); return; }
-    const me = (ME.email || "").toLowerCase();
-    const roleSelect = (value, disabled) => { const sel = h("select", { class: "select", disabled }, ["owner", "editor", "viewer"].map((r) => h("option", { value: r }, ROLE_LABEL[r]))); sel.value = value; return sel; };
-    const iName = h("input", { class: "input", type: "text", placeholder: "Name", "aria-label": "Name" });
-    const iEmail = h("input", { class: "input", type: "email", placeholder: "Login, e.g. selam@klever.local", "aria-label": "Login" });
-    const iPass = h("input", { class: "input", type: "text", placeholder: "Password (at least 8)", "aria-label": "Password", autocomplete: "off" });
-    const iRole = roleSelect("editor", false);
-    const add = h("button", { class: "btn btn-sm btn-primary", type: "button" }, icon("plus"), "Give access");
-    add.addEventListener("click", async () => {
-      try {
-        const login = iEmail.value.trim().toLowerCase();
-        await api("/members", { email: login, name: iName.value.trim(), role: iRole.value, password: iPass.value });
-        toast(iPass.value ? `Done. Send ${iName.value.trim() || "them"} the link, the login ${login} and the password.` : `Access given. Tap Set password to give ${login} a password.`);
-        renderTeam(host);
-      } catch (x) { if (!x.quiet) toast(x.message); }
-    });
-    const pill = (ok) => h("span", { class: `badge ${ok ? "good" : "warning"}` }, icon(ok ? "check" : "clock"), ok ? "Has login" : "No password yet");
-    const rows = (data.members || []).map((m) => {
-      const self = m.email.toLowerCase() === me;
-      const sel = roleSelect(m.role, self);
-      sel.addEventListener("change", async () => { try { await api("/members", { email: m.email, role: sel.value }); toast(`${m.email}: ${ROLE_LABEL[sel.value]}.`); } catch (x) { if (!x.quiet) toast(x.message); renderTeam(host); } });
-      const actions = h("div", { class: "team-acts" });
-      if (!self && m.role !== "owner") {
-        const reset = h("button", { class: "btn btn-sm", type: "button" }, "Set password");
-        reset.addEventListener("click", async () => {
-          const pw = prompt(`New password for ${m.email} (at least 8 characters). Tell them the new password; they can change it after signing in.`);
-          if (!pw) return;
-          try { await api("/members/password", { email: m.email, password: pw }); toast(`New password set for ${m.email}.`); } catch (x) { if (!x.quiet) toast(x.message); }
-        });
-        actions.append(reset);
-      }
-      if (!self) {
-        const rm = h("button", { class: "btn btn-sm btn-ghost danger", type: "button" }, "Remove");
-        rm.addEventListener("click", async () => {
-          if (!confirm(`Remove access for ${m.email}? They will no longer see this report.`)) return;
-          try { await api("/members/delete", { email: m.email }); renderTeam(host); } catch (x) { if (!x.quiet) toast(x.message); }
-        });
-        actions.append(rm);
-      }
-      return h("tr", {}, h("td", {}, h("strong", {}, m.name || "—")), h("td", {}, m.email), h("td", {}, sel), h("td", {}, pill(m.hasAccount)), h("td", {}, self ? h("span", { class: "muted" }, "You") : actions));
-    });
-    host.replaceChildren(
-      h("div", { class: "sheet-head" }, h("h3", {}, "Team & access"), h("span", { class: "count" }, `${num(rows.length)} ${rows.length === 1 ? "person" : "people"}`)),
-      h("div", { class: "team-add" }, iName, iEmail, iPass, iRole, add),
-      h("div", { class: "table-wrap" }, h("table", { class: "dt" }, h("thead", {}, h("tr", {}, ["Name", "Login", "Access", "Status", ""].map((t) => h("th", { scope: "col" }, t)))), h("tbody", {}, rows))),
-      h("div", { class: "sheet-foot" }, "Owner: sees everything and manages access. Enters data: adds and edits records and settings. View only: sees the report and records but cannot change them. To add a person: type their name, a login (e.g. sara@klever.local) and a password, tap Give access, then send them the link, login and password. Forgotten password: tap Set password and tell the person the new one. One account works on every department page the person has access to."));
   }
 
   /* ---------- view switching ---------- */

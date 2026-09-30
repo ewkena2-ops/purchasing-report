@@ -23,18 +23,14 @@ Klever Küche's daily purchasing report for the purchasing officer, submitted to
 - **Settings** holds the names, deadline, bank, approval limit and currency.
 - **Download PDF** makes the day's report (about 3 pages).
 
-## Login and access
+## Sharing (no login)
 
-Records are shared online through a small Cloudflare server (Worker + D1 database, free plan). Everyone signs in with email and password. One account works on every department page the person has access to.
+Records are shared online through a small Cloudflare server (Worker + D1 database, free plan). There is no login. The report's full link ends with a secret code (`?k=...`): everyone who opens the full link sees and edits the same records, live. Without the code nothing can be seen or changed. The code is not stored in this repository; the server keeps only its hash.
 
-| Access | Can do |
-|---|---|
-| Owner | Everything, plus **Team & access**: add people, change access, reset forgotten passwords |
-| Enters data | Add and edit records and settings, see the report, make PDFs |
-| View only | See the report and records, make PDFs; cannot change anything |
+- Send the **full link** (with `?k=...`) to the people who should use the report.
+- A device that opened the full link once remembers the code, so a home-screen shortcut keeps working.
+- To lock everyone out, a new code is made on the server (`link_keys` table) and the new full link is sent again.
 
-**Adding people:** there is no self sign-up. The owner opens **Data sheet → Team & access**, types the person's name, a login (e.g. `sara@klever.local`, it does not need to be a real email) and a password, picks the access level and taps *Give access*. Then they send the person the link, login and password. A forgotten password is reset there with *Set password*. Someone who already has a login from another department is added without a password.
-
-The server is shared with the Commercial report (code in the commercial-report repo, `server/`). To use the page on one device only (no login), leave `apiUrl` empty in `config.js`.
+The server is shared with the Commercial report (code in the commercial-report repo, `server/`). To keep records on one device only, leave `apiUrl` empty in `config.js`.
 
 Amharic text in PDFs uses the bundled Abyssinica SIL font (`fonts/`, SIL Open Font License).
