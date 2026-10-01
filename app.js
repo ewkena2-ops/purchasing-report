@@ -186,7 +186,7 @@
     const days = termDays(sup && sup.terms);
     const credits = [];
     if (openingBal > 0) credits.push({ amount: openingBal, due: isISO(sup.openingDue) ? sup.openingDue : null });
-    for (const r of rows.filter((x) => x.type === "Credit taken")) credits.push({ amount: n0(r.amount), due: isISO(r.dueDate) ? r.dueDate : addDays(r.date, days), jobCode: r.jobCode });
+    for (const r of rows.filter((x) => x.type === "Credit taken")) credits.push({ amount: n0(r.amount), due: isISO(r.dueDate) ? r.dueDate : addDays(r.date, days), jobCode: r.jobCode, cheque: r.chequeGiven === "Yes", chequeNo: String(r.chequeNo || "").trim() });
     credits.sort((a, b) => (a.due || "0000").localeCompare(b.due || "0000"));
     let pool = paid(rows);
     for (const c of credits) { const take = Math.min(c.amount, pool); c.left = c.amount - take; pool -= take; }
@@ -195,11 +195,18 @@
     const overdue = sum(open.filter((c) => c.due && c.due < T), (c) => c.left);
     const due7 = sum(open.filter((c) => c.due && c.due >= T && c.due <= addDays(T, 7)), (c) => c.left);
     const nextDue = open.map((c) => c.due).filter((d) => d && d >= T).sort()[0] || null;
+    // Credit still open for which we gave the supplier a cheque
+    const openAmt = sum(open, (c) => c.left);
+    const chequeAmt = sum(open.filter((c) => c.cheque), (c) => c.left);
+    const chequeNos = uniq(open.filter((c) => c.cheque).map((c) => c.chequeNo));
     let status = "Paid up";
     if (!sup) status = "Unknown supplier";
     else if (closing > 0.005) status = cod ? "Cash needed" : overdue > 0.005 ? "Overdue" : "Within terms";
-    return { name, terms: (sup && sup.terms) || "—", opening, newCredit, paidToday, closing, overdue, due7, nextDue, status, cod, open };
+    return { name, terms: (sup && sup.terms) || "—", opening, newCredit, paidToday, closing, overdue, due7, nextDue, status, cod, open, openAmt, chequeAmt, chequeNos };
   }
+
+  // Was a cheque given for the credit still open? Yes / No / Part (amount covered)
+  const chequeText = (x) => (x.openAmt <= 0.005 ? "—" : x.chequeAmt <= 0.005 ? "No" : x.chequeAmt >= x.openAmt - 0.005 ? "Yes" : `Part: ${money(x.chequeAmt)}`);
 
   /* ---------- view model ---------- */
   function buildView() {
@@ -250,6 +257,7 @@
     v.newCredit = sum(v.sup, (x) => x.newCredit);
     v.paidToday = sum(v.sup, (x) => x.paidToday);
     v.unknownSuppliers = v.sup.filter((x) => x.status === "Unknown supplier");
+    v.chequeHeld = sum(v.sup, (x) => x.chequeAmt);
 
     // 05 / 06 jobs
     v.jobs = D.jobs.map((j) => {
@@ -881,17 +889,18 @@
     TABLES.mat.setRows(v.mat);
     // 04
     statStrip($("#credit-stats"), [
-      { label: "Total owed to suppliers", value: moneyC(v.owed), title: money(v.owed), foot: `${num(v.sup.filter((x) => x.closing > 0.005).length)} suppliers` },
+      { label: "Total owed to suppliers", value: moneyC(v.owed), title: `${money(v.owed)} · cheque given for ${money(v.chequeHeld)}`, foot: `${num(v.sup.filter((x) => x.closing > 0.005).length)} suppliers · ${moneyC(v.chequeHeld)} with cheque given` },
       { label: "Overdue", value: moneyC(v.overdue), title: money(v.overdue), foot: v.overdue > 0 ? warn("Past due date") : "Nothing overdue" },
       { label: "Due within 7 days", value: moneyC(v.due7), title: money(v.due7), foot: `Up to ${fday(v.T7)}` },
       { label: "Today", value: `+${moneyC(v.newCredit)}`, title: `New credit ${money(v.newCredit)}, paid ${money(v.paidToday)}`, foot: `new credit · ${moneyC(v.paidToday)} paid` },
     ]);
     const supRows = [...v.sup].sort((a, b) => b.closing - a.closing);
     $("#credit-table").replaceChildren(simpleTable({
-      head: ["Supplier", "Terms", "Opening", "New credit today", "Paid today", "Closing", "Next due", "Status"], num: [2, 3, 4, 5],
+      head: ["Supplier", "Terms", "Opening", "New credit today", "Paid today", "Closing", "Next due", "Cheque given?", "Status"], num: [2, 3, 4, 5],
       rows: supRows.map((x) => [h("strong", {}, x.name), x.terms, money(x.opening), money(x.newCredit), money(x.paidToday), h("strong", {}, money(x.closing)),
-        x.cod && x.closing > 0 ? "Immediate" : x.nextDue ? fdate(x.nextDue) : "—", badge(x.status)]),
-      foot: ["Total", "", money(sum(supRows, (x) => x.opening)), money(v.newCredit), money(v.paidToday), money(sum(supRows, (x) => x.closing)), "", ""],
+        x.cod && x.closing > 0 ? "Immediate" : x.nextDue ? fdate(x.nextDue) : "—",
+        x.chequeNos.length ? [chequeText(x), h("span", { class: "sub" }, `No. ${x.chequeNos.join(", ")}`)] : chequeText(x), badge(x.status)]),
+      foot: ["Total", "", money(sum(supRows, (x) => x.opening)), money(v.newCredit), money(v.paidToday), money(sum(supRows, (x) => x.closing)), "", v.chequeHeld > 0.005 ? money(v.chequeHeld) : "", ""],
       empty: emptyState("No suppliers yet", "Add suppliers and their credit / payments in the Data sheet."),
     }));
     V.supBars = supRows.filter((x) => x.closing > 0.005).slice(0, 10).map((x) => ({ label: x.name, value: x.closing, extra: [{ value: x.status, label: "" }] }));
@@ -1116,6 +1125,7 @@
     ] },
     { id: "ledger", label: "Credit & payments", prefix: "LG-", aliases: ["credit", "creditandpayments", "suppliercredit", "payments"], cols: [
       cId(), cDate(), cSup(), col("type", "Type", "select", 140, { options: LEDGER_TYPES }), cAmount(), cDate("dueDate", "Due date"),
+      col("chequeGiven", "Cheque given?", "select", 130, { options: NO_YES }), col("chequeNo", "Cheque no.", "text", 120),
       cJob(), col("paidVia", "Paid via", "select", 140, { options: () => [C.bank || "Bank", "Cash", "Other bank"] }), cNote(),
     ], onChange: (r, key) => {
       if ((key === "date" || key === "supplier" || key === "type") && r.type === "Credit taken" && isISO(r.date) && !isISO(r.dueDate)) {
@@ -1553,11 +1563,12 @@ ${DATASETS.map((k) => `\n  ${k}: [\n${rows(D[k])}${D[k].length ? "," : ""}\n  ],
     // make sure something arrived today
     d.materials.filter((m) => m.expectedDate === T || m.expectedDate === addDays(T, -1)).slice(0, 2).forEach((m) => { m.actualDate = T; m.status = "In store"; m.confirmed = "Yes"; });
     // supplier ledger: credit on ordered requests, some payments
-    let lg = 0;
+    let lg = 0, chqNo = 104500;
+    const sampleCheque = () => (rnd() < 0.6 ? { chequeGiven: "Yes", chequeNo: String(++chqNo) } : { chequeGiven: "No", chequeNo: "" });
     for (const r of d.requests.filter((x) => x.status === "Ordered" && x.date >= addDays(T, -6))) {
       const sup = d.suppliers.find((x) => x.name === r.supplier);
       if (/cod/i.test(sup.terms)) continue;
-      d.ledger.push({ id: `LG-${String(++lg).padStart(3, "0")}`, date: r.date, supplier: r.supplier, type: "Credit taken", amount: round(r.amount * 0.6, 50), dueDate: addDays(r.date, termDays(sup.terms)), jobCode: r.jobCode, paidVia: "", note: "" });
+      d.ledger.push({ id: `LG-${String(++lg).padStart(3, "0")}`, date: r.date, supplier: r.supplier, type: "Credit taken", amount: round(r.amount * 0.6, 50), dueDate: addDays(r.date, termDays(sup.terms)), ...sampleCheque(), jobCode: r.jobCode, paidVia: "", note: "" });
     }
     for (const sup of d.suppliers.filter((x) => x.openingBalance > 0)) {
       if (sup.name === "Unity Hardware") { d.ledger.push({ id: `LG-${String(++lg).padStart(3, "0")}`, date: T, supplier: sup.name, type: "Payment made", amount: 200000, dueDate: "", jobCode: "", paidVia: bank, note: "" }); continue; }
@@ -1776,11 +1787,13 @@ ${DATASETS.map((k) => `\n  ${k}: [\n${rows(D[k])}${D[k].length ? "," : ""}\n  ],
     // 4
     k.heading("4", "Supplier credit & outstanding balances", rules.credit);
     const sup = [...v.sup].sort((a, b) => b.closing - a.closing);
-    k.table({ head: ["Supplier", "Terms", "Opening", "New credit today", "Paid today", "Closing", "Next due", "Status"], align: ["l", "l", "r", "r", "r", "r", "l", "l"],
-      body: sup.map((x) => [x.name, x.terms, money(x.opening), money(x.newCredit), money(x.paidToday), money(x.closing), x.cod && x.closing > 0 ? "Immediate" : x.nextDue ? fdate(x.nextDue) : "-", x.status]),
-      foot: sup.length ? ["Total", "", money(sum(sup, (x) => x.opening)), money(v.newCredit), money(v.paidToday), money(sum(sup, (x) => x.closing)), "", ""] : null,
-      color: red((ri, ci) => ci === 7 && ["Overdue", "Cash needed", "Unknown supplier"].includes(sup[ri].status)), empty: "No suppliers recorded." });
-    k.line(`Total owed to suppliers: ${money(v.owed)}   ·   Overdue: ${money(v.overdue)}   ·   Due within 7 days: ${money(v.due7)}`, { style: "bold", color: PC.ink });
+    k.table({ head: ["Supplier", "Terms", "Opening", "New credit today", "Paid today", "Closing", "Next due", "Cheque given?", "Status"], align: ["l", "l", "r", "r", "r", "r", "l", "l", "l"],
+      body: sup.map((x) => [x.name, x.terms, money(x.opening), money(x.newCredit), money(x.paidToday), money(x.closing), x.cod && x.closing > 0 ? "Immediate" : x.nextDue ? fdate(x.nextDue) : "-",
+        chequeText(x).replace("—", "-") + (x.chequeNos.length ? `
+No. ${x.chequeNos.join(", ")}` : ""), x.status]),
+      foot: sup.length ? ["Total", "", money(sum(sup, (x) => x.opening)), money(v.newCredit), money(v.paidToday), money(sum(sup, (x) => x.closing)), "", v.chequeHeld > 0.005 ? money(v.chequeHeld) : "", ""] : null,
+      color: red((ri, ci) => ci === 8 && ["Overdue", "Cash needed", "Unknown supplier"].includes(sup[ri].status)), empty: "No suppliers recorded." });
+    k.line(`Total owed to suppliers: ${money(v.owed)}   ·   Cheque given for: ${money(v.chequeHeld)}   ·   Overdue: ${money(v.overdue)}   ·   Due within 7 days: ${money(v.due7)}`, { style: "bold", color: PC.ink });
     // 5
     k.heading("5", "Cost variance & overrun alerts", rules.variance);
     k.table({ head: ["Job", "Contract value", "Purchase cost", "Variance", "Reason for overrun", "Action taken"], align: ["l", "r", "r", "r", "l", "l"],

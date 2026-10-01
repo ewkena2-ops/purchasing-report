@@ -9,7 +9,7 @@ Klever Küche's daily purchasing report for the purchasing officer, submitted to
 1. **Purchase requests & bank status**: the approver is set by amount (below / from the approval limit); a cheque issued without confirmed funds or approval is flagged
 2. **Cheques delivered**: supplier confirmation, materials delivery date, documents to finance within 24 hours
 3. **Materials received / in transit**: late arrivals, defects, storekeeper confirmation
-4. **Supplier credit & outstanding balances**: opening, new credit, payments, closing, next due and overdue, calculated from the Credit & payments ledger (oldest credit is paid first)
+4. **Supplier credit & outstanding balances**: opening, new credit, payments, closing, next due and overdue, calculated from the Credit & payments ledger (oldest credit is paid first). Each credit records whether we gave the supplier a cheque (and its number); the report shows which open credit has a cheque given
 5. **Cost variance & overrun alerts**: contract value against purchase cost; overruns without a written explanation are flagged
 6. **Missing data / outstanding BOMs**
 7. **Defective materials & supplier issues**
