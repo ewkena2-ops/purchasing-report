@@ -167,6 +167,8 @@
   const listText = (arr, max = 4) => (arr.length <= max ? arr.join(", ") : `${arr.slice(0, max).join(", ")} and ${arr.length - max} more`);
 
   const sum = (arr, f = (x) => x.amount) => arr.reduce((a, x) => a + n0(f(x)), 0);
+  const jobKey = (code) => (String(code || "").trim() ? String(code).trim().toUpperCase().replace(/\d+/g, (d) => d.padStart(9, "0")) : "\uffff");
+  const byJobThenNewest = (a, b) => jobKey(a.jobCode).localeCompare(jobKey(b.jobCode)) || String(b.date || "").localeCompare(String(a.date || ""));
   const uniq = (arr) => [...new Set(arr.filter((v) => v !== "" && v != null))].sort();
 
   /* ---------- state ---------- */
@@ -730,11 +732,11 @@
           { value: "waiting", label: "Waiting for cash", match: (r) => (r.status || "Waiting for cash") === "Waiting for cash" },
           { value: "transport", label: "Waiting for transportation", match: (r) => r.status === "Waiting for transportation" },
           { value: "all", label: "All", match: () => true }] },
-        sort: { key: "date", dir: -1 },
+        sort: { key: "jobCode", dir: 1 },
         rowClass: (r) => (r.broken ? "row-bad" : null),
         columns: [
           { key: "date", label: "Date", cell: (r) => fday(r.date), cls: "muted" },
-          { key: "jobCode", label: "Job", cls: "strong" },
+          { key: "jobCode", label: "Job", cls: "strong", sortVal: (r) => jobKey(r.jobCode) },
           { key: "supplier", label: "Supplier / item", cell: (r) => twoLine(r.supplier, r.item) },
           { key: "amount", label: "Amount", num: true, cell: (r) => amountCell(r.amount), sortVal: (r) => n0(r.amount) },
           { key: "approval", label: "Approval", cell: (r) => [badge(r.approval || "Pending"), h("span", { class: "sub" }, `by ${r.approver}`)], csv: (r) => `${r.approval || "Pending"} (${r.approver})` },
@@ -888,7 +890,7 @@
       { label: "Cheques issued today", value: moneyC(sum(v.reqChequesToday)), title: money(sum(v.reqChequesToday)), foot: `${num(v.reqChequesToday.length)} cheques` },
       { label: "Rule broken today", value: num(v.reqBrokenToday.length), foot: v.reqBrokenToday.length ? warn("Cheque without funds or approval") : "None" },
     ]);
-    TABLES.req.setRows(v.req);
+    TABLES.req.setRows([...v.req].sort((a, b) => String(b.date || "").localeCompare(String(a.date || ""))));
     // 02
     statStrip($("#chq-stats"), [
       { label: "Delivered today", value: moneyC(sum(v.chqToday)), title: money(sum(v.chqToday)), foot: `${num(v.chqToday.length)} cheques` },
@@ -1119,7 +1121,7 @@
   const optsOf = (c) => (typeof c.options === "function" ? c.options() : c.options);
 
   const SHEETS = [
-    { id: "requests", label: "Purchase requests", prefix: "PR-", cols: [
+    { id: "requests", label: "Purchase requests", prefix: "PR-", sortRows: (a, b) => jobKey(a.jobCode).localeCompare(jobKey(b.jobCode)), sortNote: "sorted by job code", cols: [
       cId(), cDate(), cJob(), cSup(), col("item", "Item / material", "text", 200, { suggest: true }), cAmount(),
       col("approval", "Approval", "select", 110, { options: APPROVAL }), col("fundsConfirmed", "Funds in bank?", "select", 120, { options: NO_YES }),
       col("chequeIssued", "Cheque issued?", "select", 120, { options: NO_YES }), col("status", "Status", "select", 150, { options: REQ_STATUS }), cNote(),
@@ -1329,7 +1331,8 @@
     const drawGrid = () => {
       const q = sheetUI.q.toLowerCase();
       const visible = rows.map((r, i) => [r, i]).filter(([r]) => !q || def.cols.some((c) => String(r[c.key] ?? "").toLowerCase().includes(q)));
-      count.textContent = q ? `${num(visible.length)} of ${num(rows.length)} rows` : `${num(rows.length)} ${rows.length === 1 ? "row" : "rows"}`;
+      if (def.sortRows) visible.sort(([a], [b]) => def.sortRows(a, b));
+      count.textContent = (q ? `${num(visible.length)} of ${num(rows.length)} rows` : `${num(rows.length)} ${rows.length === 1 ? "row" : "rows"}`) + (def.sortNote && rows.length > 1 ? ` · ${def.sortNote}` : "");
       if (!rows.length) {
         gridWrap.replaceChildren(h("div", { class: "sheet-empty" }, h("strong", {}, `No ${def.label.toLowerCase()} yet. `), "Tap Add row, or import an Excel/CSV file."));
         return;
@@ -1338,7 +1341,7 @@
         h("th", { class: "rn", scope: "col" }, "#"),
         def.cols.map((c) => h("th", { class: c.type === "number" ? "num" : null, scope: "col", style: `min-width:${c.w}px` }, c.label)),
         h("th", { scope: "col" }, h("span", { class: "sr-only" }, "Delete"))));
-      gridWrap.replaceChildren(h("table", { class: "sheet-grid" }, thead, h("tbody", {}, visible.map(([r, i]) => sheetRow(def, r, i, ro)))));
+      gridWrap.replaceChildren(h("table", { class: "sheet-grid" }, thead, h("tbody", {}, visible.map(([r, i], pos) => sheetRow(def, r, def.sortRows ? pos : i, ro)))));
     };
     search.addEventListener("input", () => { sheetUI.q = search.value.trim(); drawGrid(); });
     add.addEventListener("click", () => {
@@ -1810,7 +1813,7 @@ ${DATASETS.map((k) => `\n  ${k}: [\n${rows(D[k])}${D[k].length ? "," : ""}\n  ],
 
     // 1
     k.heading("1", "Purchase requests & bank status", rules.requests);
-    const req = [...v.reqToday, ...[...v.reqWaiting, ...v.reqTransport].filter((r) => r.date !== v.T).sort((a, b) => String(b.date).localeCompare(String(a.date)))];
+    const req = [...v.reqToday, ...[...v.reqWaiting, ...v.reqTransport].filter((r) => r.date !== v.T)].sort(byJobThenNewest);
     k.table({ head: ["Date", "Job", "Supplier", "Item", "Amount", "Approval", "Funds OK?", "Cheque?", "Status"], align: ["l", "l", "l", "l", "r", "l", "l", "l", "l"],
       body: req.map((r) => [fday(r.date), r.jobCode, r.supplier, r.item, money(r.amount), `${r.approval || "Pending"} (${r.approver})`, r.fundsConfirmed || "No", r.chequeIssued || "No", r.broken ? "RULE BROKEN" : r.status]),
       foot: req.length ? ["Total", "", "", "", money(sum(req)), "", "", "", ""] : null, color: red((ri, ci) => ci === 8 && req[ri].broken), empty: "No purchase requests today or waiting for cash or transportation." });
