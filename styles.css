@@ -580,6 +580,7 @@ table.dt { width: 100%; border-collapse: collapse; font-size: 13px; }
   .stat { border-left: 0; border-top: 1px solid var(--border); }
   .stat:nth-child(-n+2) { border-top: 0; }
   .stat:nth-child(even) { border-left: 1px solid var(--border); }
+  .stat:last-child:nth-child(odd) { grid-column: 1 / -1; }
   .st-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .statement { padding: 22px 18px; }
   .st-sign { grid-template-columns: minmax(0, 1fr); gap: 26px; }
