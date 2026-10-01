@@ -167,7 +167,19 @@
   const listText = (arr, max = 4) => (arr.length <= max ? arr.join(", ") : `${arr.slice(0, max).join(", ")} and ${arr.length - max} more`);
 
   const sum = (arr, f = (x) => x.amount) => arr.reduce((a, x) => a + n0(f(x)), 0);
-  const jobKey = (code) => (String(code || "").trim() ? String(code).trim().toUpperCase().replace(/\d+/g, (d) => d.padStart(9, "0")) : "\uffff");
+  // Sort key for job codes: dots, spaces and case don't count (K.k180 = Kk180 = KK180), numbers in number order (KK99 before KK101),
+  // "KK180 & KK201" sits right after KK180; rows without a job go last
+  const jobKey = (code) => {
+    const raw = String(code || "").trim();
+    const toks = raw.toUpperCase().match(/[A-Z]+|\d+/g);
+    if (!toks) return raw ? `\ufffe${raw}` : "\uffff";
+    const parts = [];
+    for (const t of toks) {
+      if (parts.length && /^[A-Z]/.test(t) && /^[A-Z]/.test(parts[parts.length - 1])) parts[parts.length - 1] += t;
+      else parts.push(t);
+    }
+    return parts.map((t) => (/^\d/.test(t) ? t.padStart(9, "0") : t)).join(" ");
+  };
   const byJobThenNewest = (a, b) => jobKey(a.jobCode).localeCompare(jobKey(b.jobCode)) || String(b.date || "").localeCompare(String(a.date || ""));
   const uniq = (arr) => [...new Set(arr.filter((v) => v !== "" && v != null))].sort();
 
