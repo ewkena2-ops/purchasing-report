@@ -79,7 +79,7 @@
   const APPROVAL = ["Pending", "Approved", "Rejected"];
   const REQ_STATUS = ["Waiting for cash", "Ordered", "Cancelled"];
   const MAT_STATUS = ["In transit", "In store", "Delayed"];
-  const TERMS = ["COD", "7 days", "14 days", "30 days", "45 days", "60 days"];
+  const TERMS = ["", "COD", "7 days", "14 days", "30 days", "45 days", "60 days"];
   const LEDGER_TYPES = ["Credit taken", "Payment made"];
   const ISSUE_STATUS = ["Open", "Replacement pending", "Refund pending", "Resolved"];
   const NEED_STATUS = ["Needed", "Paid", "Cancelled"];
@@ -184,9 +184,14 @@
     const newCredit = credit(today), paidToday = paid(today);
     const closing = opening + newCredit - paidToday;
     const days = termDays(sup && sup.terms);
+    const hasTerms = !!String((sup && sup.terms) || "").trim();
     const credits = [];
     if (openingBal > 0) credits.push({ amount: openingBal, due: isISO(sup.openingDue) ? sup.openingDue : null });
-    for (const r of rows.filter((x) => x.type === "Credit taken")) credits.push({ amount: n0(r.amount), due: isISO(r.dueDate) ? r.dueDate : addDays(r.date, days), jobCode: r.jobCode, cheque: r.chequeGiven === "Yes", chequeNo: String(r.chequeNo || "").trim() });
+    for (const r of rows.filter((x) => x.type === "Credit taken")) {
+      // Without credit terms we don't know when it is due. A due date on the credit's own day was filled in automatically then, so it does not count.
+      const typed = isISO(r.dueDate) && (hasTerms || r.dueDate !== r.date) ? r.dueDate : null;
+      credits.push({ amount: n0(r.amount), due: typed || (hasTerms ? addDays(r.date, days) : null), jobCode: r.jobCode, cheque: r.chequeGiven === "Yes", chequeNo: String(r.chequeNo || "").trim() });
+    }
     credits.sort((a, b) => (a.due || "0000").localeCompare(b.due || "0000"));
     let pool = paid(rows);
     for (const c of credits) { const take = Math.min(c.amount, pool); c.left = c.amount - take; pool -= take; }
@@ -200,13 +205,22 @@
     const chequeAmt = sum(open.filter((c) => c.cheque), (c) => c.left);
     const chequeNos = uniq(open.filter((c) => c.cheque).map((c) => c.chequeNo));
     let status = "Paid up";
-    if (!sup) status = "Unknown supplier";
-    else if (closing > 0.005) status = cod ? "Cash needed" : overdue > 0.005 ? "Overdue" : "Within terms";
-    return { name, terms: (sup && sup.terms) || "—", opening, newCredit, paidToday, closing, overdue, due7, nextDue, status, cod, open, openAmt, chequeAmt, chequeNos };
+    if (closing > 0.005) status = cod ? "Cash needed" : overdue > 0.005 ? "Overdue" : open.every((c) => !c.due) ? "No due date" : "Within terms";
+    return { name, terms: (sup && sup.terms) || "—", opening, newCredit, paidToday, closing, overdue, due7, nextDue, status, cod, open, openAmt, chequeAmt, chequeNos, known: !!sup, hasTerms };
   }
 
   // Was a cheque given for the credit still open? Yes / No / Part (amount covered)
   const chequeText = (x) => (x.openAmt <= 0.005 ? "—" : x.chequeAmt <= 0.005 ? "No" : x.chequeAmt >= x.openAmt - 0.005 ? "Yes" : `Part: ${money(x.chequeAmt)}`);
+
+  // A supplier missing from the Suppliers tab (or without credit terms) says so, with a button to fix it
+  const termsLabel = (x) => (!x.known ? "Not in list" : x.hasTerms ? x.terms : "Not set");
+  const needsTerms = (x) => !x.known || (!x.hasTerms && x.closing > 0.005);
+  function supplierStatusCell(x) {
+    if (!needsTerms(x) || !canWrite()) return badge(x.status);
+    const tip = x.known ? `Choose the credit terms for ${x.name} in the Suppliers tab` : `${x.name} is not in the Suppliers tab. Add it and choose the credit terms`;
+    return [badge(x.status), h("button", { class: "btn btn-sm cell-action", type: "button", title: tip, "aria-label": tip, onclick: () => openSupplier(x.name) },
+      icon(x.known ? "sheet" : "plus"), x.known ? "Set terms" : "Add supplier")];
+  }
 
   /* ---------- view model ---------- */
   function buildView() {
@@ -256,7 +270,7 @@
     v.due7 = sum(v.sup, (x) => x.due7);
     v.newCredit = sum(v.sup, (x) => x.newCredit);
     v.paidToday = sum(v.sup, (x) => x.paidToday);
-    v.unknownSuppliers = v.sup.filter((x) => x.status === "Unknown supplier");
+    v.unknownSuppliers = v.sup.filter((x) => !x.known);
     v.chequeHeld = sum(v.sup, (x) => x.chequeAmt);
 
     // 05 / 06 jobs
@@ -378,7 +392,7 @@
   const STATUS = {
     Approved: "good", Ordered: "good", "In store": "good", "Within terms": "good", Resolved: "good", Paid: "good", Explained: "good", Yes: "good", OK: "good",
     Pending: "warning", "Waiting for cash": "warning", "In transit": "warning", "Replacement pending": "warning", "Refund pending": "warning", Needed: "warning", "Due tomorrow": "warning",
-    Delayed: "serious", Open: "serious", "Unknown supplier": "serious",
+    Delayed: "serious", Open: "serious", "No due date": "serious",
     Late: "critical", Overdue: "critical", "Cash needed": "critical", "Rule broken": "critical", "No explanation": "critical", "Docs late": "critical", Defect: "critical",
     Rejected: "neutral", Cancelled: "neutral", "Paid up": "neutral", No: "neutral",
   };
@@ -573,7 +587,7 @@
         : null;
       card.replaceChildren(
         h("header", { class: "card-head" }, h("div", {}, h("h3", {}, card.dataset.title), h("p", { class: "card-sub" }, card.dataset.sub || "")), toggle),
-        legend,
+        legend || "",
         h("div", { class: "chart-body" + (card.hasAttribute("data-hb") ? " hb-body" : "") }),
         h("div", { class: "chart-table", hidden: true }));
       $$("button", toggle).forEach((b) => b.addEventListener("click", () => {
@@ -897,9 +911,9 @@
     const supRows = [...v.sup].sort((a, b) => b.closing - a.closing);
     $("#credit-table").replaceChildren(simpleTable({
       head: ["Supplier", "Terms", "Opening", "New credit today", "Paid today", "Closing", "Next due", "Cheque given?", "Status"], num: [2, 3, 4, 5],
-      rows: supRows.map((x) => [h("strong", {}, x.name), x.terms, money(x.opening), money(x.newCredit), money(x.paidToday), h("strong", {}, money(x.closing)),
+      rows: supRows.map((x) => [h("strong", {}, x.name), x.known && x.hasTerms ? x.terms : h("span", { class: "sub" }, termsLabel(x)), money(x.opening), money(x.newCredit), money(x.paidToday), h("strong", {}, money(x.closing)),
         x.cod && x.closing > 0 ? "Immediate" : x.nextDue ? fdate(x.nextDue) : "—",
-        x.chequeNos.length ? [chequeText(x), h("span", { class: "sub" }, `No. ${x.chequeNos.join(", ")}`)] : chequeText(x), badge(x.status)]),
+        x.chequeNos.length ? [chequeText(x), h("span", { class: "sub" }, `No. ${x.chequeNos.join(", ")}`)] : chequeText(x), supplierStatusCell(x)]),
       foot: ["Total", "", money(sum(supRows, (x) => x.opening)), money(v.newCredit), money(v.paidToday), money(sum(supRows, (x) => x.closing)), "", v.chequeHeld > 0.005 ? money(v.chequeHeld) : "", ""],
       empty: emptyState("No suppliers yet", "Add suppliers and their credit / payments in the Data sheet."),
     }));
@@ -1122,7 +1136,19 @@
     { id: "suppliers", label: "Suppliers", prefix: "SP-", aliases: ["supplier", "supplierlist"], cols: [
       cId(), col("name", "Supplier name", "text", 200, { pool: "supplier" }), col("terms", "Credit terms", "select", 110, { options: TERMS }),
       col("openingBalance", "Opening balance", "number", 140), cDate("openingDue", "Opening balance due", 170), col("phone", "Phone", "text", 130), cNote(),
-    ] },
+    ], onChange: (r, key) => {
+      // Credits with no due date (or one on the credit's own day, filled in before the terms were known) get it from the terms
+      if ((key === "terms" || key === "name") && r.name && r.terms) {
+        let n = 0;
+        for (const x of D.ledger) {
+          if (x.supplier !== r.name || x.type !== "Credit taken" || !isISO(x.date) || (isISO(x.dueDate) && x.dueDate !== x.date)) continue;
+          const due = addDays(x.date, termDays(r.terms));
+          if (x.dueDate !== due) { x.dueDate = due; n++; }
+        }
+        if (n) toast(`Due date set for ${num(n)} credit${n === 1 ? "" : "s"} from ${r.name} (${r.terms}).`);
+      }
+      return [];
+    } },
     { id: "ledger", label: "Credit & payments", prefix: "LG-", aliases: ["credit", "creditandpayments", "suppliercredit", "payments"], cols: [
       cId(), cDate(), cSup(), col("type", "Type", "select", 140, { options: LEDGER_TYPES }), cAmount(), cDate("dueDate", "Due date"),
       col("chequeGiven", "Cheque given?", "select", 130, { options: NO_YES }), col("chequeNo", "Cheque no.", "text", 120),
@@ -1130,7 +1156,7 @@
     ], onChange: (r, key) => {
       if ((key === "date" || key === "supplier" || key === "type") && r.type === "Credit taken" && isISO(r.date) && !isISO(r.dueDate)) {
         const sup = D.suppliers.find((x) => x.name === r.supplier);
-        r.dueDate = addDays(r.date, termDays(sup && sup.terms)); return ["dueDate"];
+        if (sup && sup.terms) { r.dueDate = addDays(r.date, termDays(sup.terms)); return ["dueDate"]; }
       }
       if (key === "type" && r.type === "Payment made" && isISO(r.dueDate)) { r.dueDate = ""; return ["dueDate"]; }
       return [];
@@ -1226,6 +1252,18 @@
     }
     return `${def.prefix}${String(max + 1).padStart(width, "0")}`;
   }
+  function openSupplier(name) {
+    if (!D.suppliers.some((x) => x.name === name)) {
+      const r = blankRow(SHEETS.find((d) => d.id === "suppliers"));
+      r.name = name;
+      D.suppliers.push(r);
+      saveData();
+    }
+    sheetUI.active = "suppliers"; sheetUI.q = name;
+    setView("sheet");
+    const cell = $('#sheet-body .cell[data-key="terms"]');
+    if (cell) cell.focus();
+  }
   function blankRow(def) {
     const r = {};
     for (const c of def.cols) r[c.key] = c.type === "select" ? optsOf(c)[0] : "";
@@ -1233,6 +1271,7 @@
     if (firstDate) r[firstDate.key] = todayISO();
     if (def.id === "cheques") r.time = nowHM();
     if (def.id === "materials") r.expectedDate = "";
+    if (def.id === "suppliers") r.openingDue = "";
     Object.assign(r, def.defaults ? def.defaults() : {});
     r.id = nextId(def);
     return r;
@@ -1788,12 +1827,13 @@ ${DATASETS.map((k) => `\n  ${k}: [\n${rows(D[k])}${D[k].length ? "," : ""}\n  ],
     k.heading("4", "Supplier credit & outstanding balances", rules.credit);
     const sup = [...v.sup].sort((a, b) => b.closing - a.closing);
     k.table({ head: ["Supplier", "Terms", "Opening", "New credit today", "Paid today", "Closing", "Next due", "Cheque given?", "Status"], align: ["l", "l", "r", "r", "r", "r", "l", "l", "l"],
-      body: sup.map((x) => [x.name, x.terms, money(x.opening), money(x.newCredit), money(x.paidToday), money(x.closing), x.cod && x.closing > 0 ? "Immediate" : x.nextDue ? fdate(x.nextDue) : "-",
-        chequeText(x).replace("—", "-") + (x.chequeNos.length ? `
-No. ${x.chequeNos.join(", ")}` : ""), x.status]),
+      body: sup.map((x) => [x.name, termsLabel(x), money(x.opening), money(x.newCredit), money(x.paidToday), money(x.closing), x.cod && x.closing > 0 ? "Immediate" : x.nextDue ? fdate(x.nextDue) : "-",
+        chequeText(x).replace("—", "-") + (x.chequeNos.length ? `\nNo. ${x.chequeNos.join(", ")}` : ""),
+        x.status]),
       foot: sup.length ? ["Total", "", money(sum(sup, (x) => x.opening)), money(v.newCredit), money(v.paidToday), money(sum(sup, (x) => x.closing)), "", v.chequeHeld > 0.005 ? money(v.chequeHeld) : "", ""] : null,
-      color: red((ri, ci) => ci === 8 && ["Overdue", "Cash needed", "Unknown supplier"].includes(sup[ri].status)), empty: "No suppliers recorded." });
-    k.line(`Total owed to suppliers: ${money(v.owed)}   ·   Cheque given for: ${money(v.chequeHeld)}   ·   Overdue: ${money(v.overdue)}   ·   Due within 7 days: ${money(v.due7)}`, { style: "bold", color: PC.ink });
+      color: red((ri, ci) => (ci === 8 && ["Overdue", "Cash needed"].includes(sup[ri].status)) || (ci === 1 && needsTerms(sup[ri]))), empty: "No suppliers recorded." });
+    k.line(`Total owed to suppliers: ${money(v.owed)}   ·   Overdue: ${money(v.overdue)}   ·   Due within 7 days: ${money(v.due7)}`, { style: "bold", color: PC.ink });
+    k.line(`Cheque given for: ${money(v.chequeHeld)}${v.unknownSuppliers.length ? `   ·   Not in the supplier list: ${listText(v.unknownSuppliers.map((x) => x.name))}` : ""}`);
     // 5
     k.heading("5", "Cost variance & overrun alerts", rules.variance);
     k.table({ head: ["Job", "Contract value", "Purchase cost", "Variance", "Reason for overrun", "Action taken"], align: ["l", "r", "r", "r", "l", "l"],
