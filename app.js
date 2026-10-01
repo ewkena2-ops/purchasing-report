@@ -246,15 +246,12 @@
     // 01 purchase requests
     v.req = D.requests.filter((r) => !isISO(r.date) || r.date <= T).map((r) => {
       const approver = n0(r.amount) >= limit ? C.approverHigh || "Senior approver" : C.approverLow || "Finance";
-      const noFunds = r.chequeIssued === "Yes" && r.fundsConfirmed !== "Yes";
-      const noApproval = r.chequeIssued === "Yes" && (r.approval || "Pending") !== "Approved";
-      return { ...r, approver, noFunds, noApproval, broken: noFunds || noApproval };
+      return { ...r, approver };
     });
     v.reqToday = v.req.filter((r) => r.date === T);
     v.reqWaiting = v.req.filter((r) => (r.status || "Waiting for cash") === "Waiting for cash");
     v.reqTransport = v.req.filter((r) => r.status === "Waiting for transportation");
     v.reqChequesToday = v.reqToday.filter((r) => r.chequeIssued === "Yes");
-    v.reqBrokenToday = v.reqToday.filter((r) => r.broken);
 
     // 02 cheques
     v.chq = D.cheques.filter((c) => !isISO(c.date) || c.date <= T).map((c) => ({ ...c, docsLate: isISO(c.date) && c.date < T && c.docsToFinance !== "Yes" }));
@@ -350,13 +347,6 @@
   function compliance(v) {
     const bank = C.bank || "the bank";
     const checks = [];
-    const noFunds = v.reqChequesToday.filter((r) => r.fundsConfirmed !== "Yes");
-    checks.push({
-      label: `All cheques issued today have finance's confirmed ${bank} funds`,
-      state: noFunds.length ? "fail" : "ok",
-      detail: noFunds.length ? `Issued without confirmed funds: ${listText(noFunds.map((r) => `${r.jobCode || "?"} (${money(r.amount)})`))}`
-        : v.reqChequesToday.length ? `${num(v.reqChequesToday.length)} cheque${v.reqChequesToday.length === 1 ? "" : "s"} issued, all funds confirmed` : "No cheques issued today",
-    });
     checks.push({
       label: "Documents for delivered cheques are with finance (within 24 hours)",
       state: v.docsLate.length ? "fail" : v.docsPendingToday.length ? "pending" : "ok",
@@ -409,7 +399,7 @@
     Approved: "good", Ordered: "good", "In store": "good", "Within terms": "good", Resolved: "good", Paid: "good", Explained: "good", Yes: "good", OK: "good",
     Pending: "warning", "Waiting for cash": "warning", "Waiting for transportation": "warning", "In transit": "warning", "Replacement pending": "warning", "Refund pending": "warning", Needed: "warning", "Due tomorrow": "warning",
     Delayed: "serious", Open: "serious", "No due date": "serious",
-    Late: "critical", Overdue: "critical", "Cash needed": "critical", "Rule broken": "critical", "No explanation": "critical", "Docs late": "critical", Defect: "critical",
+    Late: "critical", Overdue: "critical", "Cash needed": "critical", "No explanation": "critical", "Docs late": "critical", Defect: "critical",
     Rejected: "neutral", Cancelled: "neutral", "Paid up": "neutral", No: "neutral",
   };
   const STATUS_ICON = { good: "check", warning: "clock", serious: "alertTri", critical: "alertCircle", neutral: "circle" };
@@ -745,16 +735,15 @@
           { value: "transport", label: "Waiting for transportation", match: (r) => r.status === "Waiting for transportation" },
           { value: "all", label: "All", match: () => true }] },
         sort: { key: "jobCode", dir: 1 },
-        rowClass: (r) => (r.broken ? "row-bad" : null),
         columns: [
           { key: "date", label: "Date", cell: (r) => fday(r.date), cls: "muted" },
           { key: "jobCode", label: "Job", cls: "strong", sortVal: (r) => jobKey(r.jobCode) },
           { key: "supplier", label: "Supplier / item", cell: (r) => twoLine(r.supplier, r.item) },
           { key: "amount", label: "Amount", num: true, cell: (r) => amountCell(r.amount), sortVal: (r) => n0(r.amount) },
           { key: "approval", label: "Approval", cell: (r) => [badge(r.approval || "Pending"), h("span", { class: "sub" }, `by ${r.approver}`)], csv: (r) => `${r.approval || "Pending"} (${r.approver})` },
-          { key: "fundsConfirmed", label: "Funds in bank?", cell: (r) => yn(r.fundsConfirmed, r.chequeIssued === "Yes") },
+          { key: "fundsConfirmed", label: "Funds in bank?", cell: (r) => yn(r.fundsConfirmed) },
           { key: "chequeIssued", label: "Cheque issued?", cell: (r) => yn(r.chequeIssued) },
-          { key: "status", label: "Status", cell: (r) => (r.broken ? [badge("Rule broken"), h("span", { class: "sub" }, r.noFunds ? "cheque without confirmed funds" : "cheque without approval")] : badge(r.status || "Waiting for cash")), csv: (r) => (r.broken ? "Rule broken" : r.status) },
+          { key: "status", label: "Status", cell: (r) => badge(r.status || "Waiting for cash"), csv: (r) => r.status || "Waiting for cash" },
         ],
         summary: totalOf("Total"),
         emptyTitle: "No purchase requests", emptyText: "Add them in the Data sheet (Purchase requests tab).",
@@ -884,7 +873,7 @@
     const okCount = v.checks.filter((c) => c.state === "ok").length;
     const failCount = v.checks.filter((c) => c.state === "fail").length;
     $("#kpi-tiles").replaceChildren(
-      tile("Requested today", moneyC(sum(v.reqToday)), v.reqBrokenToday.length ? warn(`${num(v.reqBrokenToday.length)} rule broken`) : `${num(v.reqToday.length)} requests · ${num(v.reqWaiting.length)} waiting`, money(sum(v.reqToday))),
+      tile("Requested today", moneyC(sum(v.reqToday)), `${num(v.reqToday.length)} requests · ${num(v.reqWaiting.length)} waiting`, money(sum(v.reqToday))),
       tile("Cheques delivered today", moneyC(sum(v.chqToday)), v.chqUnconfirmed.length ? warn(`${num(v.chqUnconfirmed.length)} not confirmed`) : `${num(v.chqToday.length)} cheques`, money(sum(v.chqToday))),
       tile("Owed to suppliers", moneyC(v.owed), v.overdue > 0 ? warn(`${moneyC(v.overdue)} overdue`) : `${moneyC(v.due7)} due in 7 days`, money(v.owed)),
       tile("Late materials", num(v.matLate.length), v.matDefects.length ? warn(`${num(v.matDefects.length)} defective`) : `${num(v.matToday.length)} arrived today`),
@@ -900,7 +889,6 @@
       { label: "Waiting for cash", value: moneyC(sum(v.reqWaiting)), title: money(sum(v.reqWaiting)), foot: `${num(v.reqWaiting.length)} requests` },
       { label: "Waiting for transportation", value: moneyC(sum(v.reqTransport)), title: money(sum(v.reqTransport)), foot: v.reqTransport.length ? `${num(v.reqTransport.length)} requests · ${listText(uniq(v.reqTransport.map((r) => r.jobCode)), 3)}` : "None" },
       { label: "Cheques issued today", value: moneyC(sum(v.reqChequesToday)), title: money(sum(v.reqChequesToday)), foot: `${num(v.reqChequesToday.length)} cheques` },
-      { label: "Rule broken today", value: num(v.reqBrokenToday.length), foot: v.reqBrokenToday.length ? warn("Cheque without funds or approval") : "None" },
     ]);
     TABLES.req.setRows([...v.req].sort((a, b) => String(b.date || "").localeCompare(String(a.date || ""))));
     // 02
@@ -1596,9 +1584,8 @@ ${DATASETS.map((k) => `\n  ${k}: [\n${rows(D[k])}${D[k].length ? "," : ""}\n  ],
         const approval = old ? "Approved" : pick(["Approved", "Approved", "Pending"]);
         const funds = approval === "Approved" && (old || rnd() < 0.6) ? "Yes" : "No";
         let cheque = funds === "Yes" && (old || rnd() < 0.7) ? "Yes" : "No";
-        if (day === T && i === 3) cheque = "Yes"; // one rule break today, to show the check
         d.requests.push({ id: `PR-${String(++pr).padStart(3, "0")}`, date: day, jobCode: pick(activeJobs), supplier: pick(suppliers)[0], item: pick(materials), amount,
-          approval: day === T && i === 3 ? "Approved" : approval, fundsConfirmed: day === T && i === 3 ? "No" : funds, chequeIssued: cheque, status: cheque === "Yes" ? "Ordered" : "Waiting for cash", note: "" });
+          approval, fundsConfirmed: funds, chequeIssued: cheque, status: cheque === "Yes" ? "Ordered" : "Waiting for cash", note: "" });
       }
     }
     // cheques delivered: from issued requests
@@ -1827,8 +1814,8 @@ ${DATASETS.map((k) => `\n  ${k}: [\n${rows(D[k])}${D[k].length ? "," : ""}\n  ],
     k.heading("1", "Purchase requests & bank status", rules.requests);
     const req = [...v.reqToday, ...[...v.reqWaiting, ...v.reqTransport].filter((r) => r.date !== v.T)].sort(byJobThenNewest);
     k.table({ head: ["Date", "Job", "Supplier", "Item", "Amount", "Approval", "Funds OK?", "Cheque?", "Status"], align: ["l", "l", "l", "l", "r", "l", "l", "l", "l"],
-      body: req.map((r) => [fday(r.date), r.jobCode, r.supplier, r.item, money(r.amount), `${r.approval || "Pending"} (${r.approver})`, r.fundsConfirmed || "No", r.chequeIssued || "No", r.broken ? "RULE BROKEN" : r.status]),
-      foot: req.length ? ["Total", "", "", "", money(sum(req)), "", "", "", ""] : null, color: red((ri, ci) => ci === 8 && req[ri].broken), empty: "No purchase requests today or waiting for cash or transportation." });
+      body: req.map((r) => [fday(r.date), r.jobCode, r.supplier, r.item, money(r.amount), `${r.approval || "Pending"} (${r.approver})`, r.fundsConfirmed || "No", r.chequeIssued || "No", r.status || "Waiting for cash"]),
+      foot: req.length ? ["Total", "", "", "", money(sum(req)), "", "", "", ""] : null, empty: "No purchase requests today or waiting for cash or transportation." });
     // 2
     k.heading("2", "Cheques delivered today", rules.cheques);
     k.table({ head: ["Job", "Supplier", "Cheque amount", "Time", "Supplier confirmed?", "Materials delivery", "Docs to finance?"], align: ["l", "l", "r", "l", "l", "l", "l"],
